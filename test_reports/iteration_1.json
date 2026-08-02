@@ -1,0 +1,41 @@
+{
+  "summary": "Full end-to-end testing of VisaScout (backend + frontend). Backend: 17/17 pytest tests pass, including a real async live web search (Claude Sonnet 5 + Anthropic hosted web_search) that returned a valid India→Japan tourism JSON with the 5 checklist categories and 11 real official sources in ~50s. PDF export returned a valid %PDF file (>1KB). Notify correctly returns HTTP 503 (RESEND_API_KEY intentionally empty). Rerun sets status to processing. Frontend: login (demo) → disclaimer gate → dashboard → new lookup → processing-state (data-testid processing-state) → real result rendered in 63s with visa-category, requirements-summary, all 5 collapsible checklist cards, processing-card, fee-card, portal-link, sources-panel with 11 sources, 'Consult a professional' warning banner where appropriate. PDF download works. Notify button surfaces the expected 'not configured' toast. Settings notify-switch toggles both ways. Delete removes a card. No blocking bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard cards", "issues": ["Card footer has 'mt-auto pt-4 ... mt-4' (duplicate mt-4 class in Dashboard.jsx L108) — harmless but style hygiene."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Minor: dedupe duplicate 'mt-4' Tailwind class on Dashboard card footer (Dashboard.jsx L108). Optional: provide RESEND_API_KEY when the user is ready — notify path is otherwise wired correctly and gracefully surfaces the 503 as a toast."
+  ],
+  "critical_code_review_comments": [
+    "ProtectedRoute uses `window.location.pathname` for the disclaimer gate check — fine in practice but React Router's `useLocation()` would be more idiomatic and SSR-safe.",
+    "Backend `_process_lookup` background task swallows exceptions and stores `error` on the doc — good. But `asyncio.create_task` isn't retained, so if the process is restarted mid-flight the search stays 'processing' forever. Consider a TTL / heartbeat or a status watchdog.",
+    "`/api/purposes` is unauthenticated — fine, but not exposed under auth in tests either (matches implementation).",
+    "`bcrypt` password hashes verified in bcrypt-standard $2b$ format via `hash_password`/`verify_password`.",
+    "MongoDB `_id` is correctly excluded on every read using `{'_id': 0}` projection or `doc.pop('_id', None)` — no ObjectId leak observed.",
+    "Duplicate `mt-4` class in Dashboard.jsx L108 (`mt-auto pt-4 ... mt-4`) is a small hygiene issue.",
+    "Live-search result also includes `application_portal_url` (rendered as portal-link) — verified end-to-end for India→Japan (vfsglobal one-pager).",
+    "Guardrails present: warning-banner correctly rendered when `consult_professional` / `ambiguous` / `found_reliable_source === false`."
+  ],
+  "updated_files": [
+    "/app/backend/tests/__init__.py",
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "demo@visascout.app / Demo1234! (seeded)",
+  "seed_data_creation": "None — used the seeded demo account. New test users are created with @example.com and cleaned up only implicitly by DB rebuild.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend tests at /app/backend/tests/backend_test.py cover auth, purposes, async visa lookup (with polling up to 180s), list/get/rerun/delete/PDF/notify. Run with: `REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) pytest tests/backend_test.py -v`. Live lookup takes ~40-90s. Pydantic EmailStr rejects `.test` TLD — use `@example.com` for test users. Frontend disclaimer gate uses `window.location.pathname` — after login the URL briefly reads /app before redirecting to /disclaimer; wait ~1s before asserting. Demo user's seen_disclaimer is reset on every new DB (seed only inserts if missing)."
+}
