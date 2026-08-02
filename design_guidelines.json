@@ -1,0 +1,107 @@
+{
+  "theme": "The Modern Passport / Official Document",
+  "archetype": "ORGANIC & EARTHY mixed with SWISS & HIGH-CONTRAST",
+  "typography": {
+    "headings": {
+      "family": "Playfair Display",
+      "style": "Serif, Classic, Authoritative",
+      "weights": ["400", "600"],
+      "tracking": "tracking-tight"
+    },
+    "body": {
+      "family": "IBM Plex Sans",
+      "style": "Clean, highly readable, technical",
+      "weights": ["400", "500", "600"]
+    },
+    "mono": {
+      "family": "IBM Plex Mono",
+      "style": "For dates, URLs, and reference codes"
+    }
+  },
+  "colors": {
+    "background": {
+      "base": "#F9F8F6",
+      "description": "Bone White, mimics high-quality document paper."
+    },
+    "surface": {
+      "card": "#FFFFFF",
+      "description": "Pure white for high-contrast data areas."
+    },
+    "primary": {
+      "base": "#1A4331",
+      "description": "Deep Forest Green, authoritative, passport green."
+    },
+    "text": {
+      "main": "#171A1C",
+      "muted": "#5A6B62"
+    },
+    "status": {
+      "warning": "#C85A32",
+      "warning_bg": "#FDF3F0",
+      "success": "#8EAD9A",
+      "success_bg": "#F2F6F4"
+    },
+    "borders": {
+      "subtle": "#E6E4DD",
+      "strong": "#1A4331"
+    }
+  },
+  "visual_enhancers": {
+    "surfaces": "Use the 'Grid Borders (Technical)' strategy. Pure 1px solid borders. Do not use soft drop shadows. Cards should be flat rectangles with sharp or minimally rounded corners (max rounded-sm).",
+    "badges": "Use pill shapes for 'Checked on [Date]' with mono font for the date. Prominent 'Sources' panel at the bottom.",
+    "warnings": "Ambiguity/consult-a-professional banners should use the warning Rust color (#C85A32) with a stark solid background or thick border to stand out.",
+    "textures": "Subtle paper grain/noise texture overlay on the background to enhance the 'official document' feel."
+  },
+  "components": {
+    "visa_lookup_form": "Grid-based, structured like an official customs form. Inputs should have square or slightly rounded edges with clear bold labels.",
+    "checklist": "Collapsible cards. When expanded, use a dense, technical list style. Custom checkboxes (stark squares, filled with Primary Green when checked).",
+    "sources_panel": "A stark, technical footer or side panel detailing URLs and timestamps. Use mono font.",
+    "processing_cards": "Data-heavy cards. Use large numeric typography for fee and time, with the source badge explicitly attached."
+  },
+  "layouts": {
+    "grid": "Bento-style or strict technical grid. Mobile-first stacking.",
+    "spacing": "Generous padding inside sections (p-8 or p-12), but tight data grouping within cards to resemble dense official documents."
+  },
+  "motion": {
+    "general": "Minimalist. Snappy transitions. Accordion expansions should be smooth but fast. Hover states should darken the border or background slightly.",
+    "accessibility": "Respect prefers-reduced-motion."
+  },
+  "media": {
+    "image_urls": {
+      "hero_background": "https://images.unsplash.com/photo-1687552626877-f4596995931c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwzfHxhaXJwb3J0JTIwdGVybWluYWwlMjBhcmNoaXRlY3R1cmV8ZW58MHx8fHwxNzg1NzA4ODMxfDA&ixlib=rb-4.1.0&q=85",
+      "hero_description": "Clean, bright, structural airport terminal skylight. Use for hero or landing background.",
+      "disclaimer_graphic": "https://images.unsplash.com/photo-1654163600175-efc47ce20b29?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTN8MHwxfHNlYXJjaHwzfHxwYXNzcG9ydCUyMHN0YW1wcyUyMHZpbnRhZ2V8ZW58MHx8fHwxNzg1NzA4ODMxfDA&ixlib=rb-4.1.0&q=85",
+      "disclaimer_description": "Close up of paper with passport stamps. Great for the first-use disclaimer screen.",
+      "auth_side_image": "https://images.unsplash.com/photo-1562504208-03d85cc8c23e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHwyfHx3b3JsZCUyMG1hcCUyMGFic3RyYWN0JTIwbGluZSUyMGFydHxlbnwwfHx8fDE3ODU3MDg4NDN8MA&ixlib=rb-4.1.0&q=85",
+      "auth_description": "Geometric world map line art. Good for auth screen side panel."
+    }
+  },
+  "3d_libraries": {
+    "recommendation": "None needed. This app focuses on clear, 2D data presentation and trustworthiness. A 3D library would distract from the 'official document' feel."
+  },
+  "icons": {
+    "library": "lucide-react",
+    "usage": "Use crisp, well-defined icons for the 5-category checklist (Identity, Financial, Purpose-specific, Health/Biometric, Other)."
+  },
+  "instructions_to_main_agent": [
+    "Use Playfair Display for headings and IBM Plex Sans for body. Do not use generic fonts.",
+    "Implement pure flat surfaces with 1px borders (border-collapse style). Avoid box-shadows. The UI should look like a structured paper document.",
+    "For the 5-category checklist, use Shadcn Accordion but override the styles to be flat, with square corners and thick left borders when active.",
+    "Always ensure 'data-testid' is added to all interactive elements like the lookup form, checkboxes, and export buttons.",
+    "Implement the 'checked on [date]' source badges prominently inside the data cards.",
+    "The warning banner for 'consult-a-professional' must be highly visible, using the Warning Rust color (#C85A32)."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through 1px borders and stark contrast rather than shadows (for this specific design).",
+    "You MUST NOT apply universal transition. Eg: `transition: all`. Always add transitions for specific interactive elements like button, input excluding transforms.",
+    "You MUST NOT center align the app container, ie do not add `.App { text-align: center; }` in the css file.",
+    "Always use modern button styles (for this design, sharp corners or very slight rounding).",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons. Use Phosphor Icons or Lucide.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "All interactive and key informational elements MUST include a `data-testid` attribute.",
+    "Prioritize using pre-existing components from src/components/ui when applicable.",
+    "Use `sonner` for toasts."
+  ]
+}
