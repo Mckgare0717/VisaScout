@@ -105,7 +105,7 @@ export default function Dashboard() {
                     </span>
                   )}
 
-                  <div className="mt-auto pt-4 flex items-center justify-between border-t border-line mt-4">
+                  <div className="mt-auto pt-4 flex items-center justify-between border-t border-line">
                     <span className="font-mono text-[11px] text-muted2 flex items-center gap-1.5">
                       <Clock className="h-3 w-3" />
                       {processing ? "just now" : s.outdated ? <span className="text-rust">{s.days_old}d — may be outdated</span> : `${s.days_old}d ago`}
