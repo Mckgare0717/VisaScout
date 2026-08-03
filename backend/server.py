@@ -321,7 +321,7 @@ async def notify_outdated(search_id: str, user: dict = Depends(get_current_user)
         raise HTTPException(status_code=404, detail="Search not found")
     api_key = os.environ.get("RESEND_API_KEY", "").strip()
     if not api_key:
-        raise HTTPException(status_code=503, detail="Email notifications are not configured yet (missing RESEND_API_KEY).")
+        raise HTTPException(status_code=400, detail="Email notifications are not configured yet (missing RESEND_API_KEY).")
 
     import resend
     resend.api_key = api_key
@@ -347,7 +347,7 @@ async def notify_outdated(search_id: str, user: dict = Depends(get_current_user)
         email = await asyncio.to_thread(resend.Emails.send, params)
     except Exception as e:
         logger.error("resend failed: %s", e)
-        raise HTTPException(status_code=502, detail=f"Failed to send email: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to send email: {str(e)}")
     return {"status": "sent", "email_id": email.get("id") if isinstance(email, dict) else None}
 
 
