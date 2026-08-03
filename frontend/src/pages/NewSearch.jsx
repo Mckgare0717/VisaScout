@@ -3,10 +3,10 @@ import { useNavigate } from "react-router-dom";
 import Layout from "../components/Layout";
 import api, { formatApiErrorDetail } from "../lib/api";
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Checkbox } from "../components/ui/checkbox";
+import CountryAutocomplete from "../components/CountryAutocomplete";
 import { Search, Loader2, Plane, MapPin, Home, Flag } from "lucide-react";
 import { toast } from "sonner";
 
@@ -22,7 +22,7 @@ export default function NewSearch() {
     api.get("/purposes").then(({ data }) => setPurposes(data)).catch(() => {});
   }, []);
 
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const setVal = (k) => (val) => setForm((f) => ({ ...f, [k]: val }));
 
   const submit = async (e) => {
     e.preventDefault();
@@ -54,18 +54,18 @@ export default function NewSearch() {
         <form onSubmit={submit} className="mt-8 bg-white paper-card" data-testid="lookup-form">
           <div className="grid sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-line border-b border-line">
             <Field icon={Flag} label="Nationality / Passport" testid="field-nationality">
-              <Input required data-testid="input-nationality" value={form.nationality} onChange={set("nationality")}
-                placeholder="e.g. India" className="border-0 rounded-none px-0 focus-visible:ring-0 bg-transparent text-lg" />
+              <CountryAutocomplete value={form.nationality} onChange={setVal("nationality")}
+                placeholder="e.g. India" testid="input-nationality" />
             </Field>
             <Field icon={Home} label="Country of residence" testid="field-residence">
-              <Input required data-testid="input-residence" value={form.residence} onChange={set("residence")}
-                placeholder="e.g. United Arab Emirates" className="border-0 rounded-none px-0 focus-visible:ring-0 bg-transparent text-lg" />
+              <CountryAutocomplete value={form.residence} onChange={setVal("residence")}
+                placeholder="e.g. United Arab Emirates" testid="input-residence" />
             </Field>
           </div>
           <div className="grid sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-line">
             <Field icon={MapPin} label="Destination country" testid="field-destination">
-              <Input required data-testid="input-destination" value={form.destination} onChange={set("destination")}
-                placeholder="e.g. Germany" className="border-0 rounded-none px-0 focus-visible:ring-0 bg-transparent text-lg" />
+              <CountryAutocomplete value={form.destination} onChange={setVal("destination")}
+                placeholder="e.g. Germany" testid="input-destination" />
             </Field>
             <Field icon={Plane} label="Purpose of travel" testid="field-purpose">
               <Select value={form.purpose} onValueChange={(v) => setForm((f) => ({ ...f, purpose: v }))}>
