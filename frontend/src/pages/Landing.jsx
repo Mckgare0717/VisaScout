@@ -82,17 +82,6 @@ export default function Landing() {
           ))}
         </div>
       </section>
-
-      <section className="max-w-6xl mx-auto px-5 sm:px-8 py-14">
-        <div className="border-l-4 border-rust bg-rust-bg p-6 sm:p-8">
-          <p className="font-serif text-lg text-rust">A word on trust</p>
-          <p className="text-sm text-ink/80 mt-2 max-w-3xl leading-relaxed">
-            VisaScout never guarantees approval and never invents fees or processing times. When official
-            guidance is unclear or contested, we tell you plainly and recommend consulting a licensed
-            immigration professional. This tool is informational only and is not legal advice.
-          </p>
-        </div>
-      </section>
     </div>
   );
 }

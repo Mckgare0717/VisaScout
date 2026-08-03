@@ -4,7 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import api, { formatApiErrorDetail } from "../lib/api";
 import { Switch } from "../components/ui/switch";
 import { Button } from "../components/ui/button";
-import { User, Mail, Bell, ShieldAlert } from "lucide-react";
+import { User, Mail, Bell } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Settings() {
@@ -45,14 +45,6 @@ export default function Settings() {
             </div>
             <Switch checked={notify} onCheckedChange={toggle} disabled={saving} data-testid="notify-switch" />
           </div>
-        </div>
-
-        <div className="mt-6 border-l-4 border-rust bg-rust-bg p-5 flex gap-3">
-          <ShieldAlert className="h-5 w-5 text-rust shrink-0" />
-          <p className="text-sm text-ink/80">
-            VisaScout is informational only and not legal advice. Email alerts require the Resend integration to be
-            configured; otherwise the "Email me" action will report that notifications aren't set up yet.
-          </p>
         </div>
 
         <Button onClick={logout} variant="outline" data-testid="settings-logout"

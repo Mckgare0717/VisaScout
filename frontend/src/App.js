@@ -5,7 +5,6 @@ import { AuthProvider } from "./context/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Landing from "./pages/Landing";
 import Auth from "./pages/Auth";
-import Disclaimer from "./pages/Disclaimer";
 import Dashboard from "./pages/Dashboard";
 import NewSearch from "./pages/NewSearch";
 import ResultView from "./pages/ResultView";
@@ -20,7 +19,6 @@ function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Auth mode="login" />} />
             <Route path="/register" element={<Auth mode="register" />} />
-            <Route path="/disclaimer" element={<ProtectedRoute><Disclaimer /></ProtectedRoute>} />
             <Route path="/app" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/app/new" element={<ProtectedRoute><NewSearch /></ProtectedRoute>} />
             <Route path="/app/search/:id" element={<ProtectedRoute><ResultView /></ProtectedRoute>} />

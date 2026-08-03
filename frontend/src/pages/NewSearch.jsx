@@ -6,6 +6,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { Checkbox } from "../components/ui/checkbox";
 import { Search, Loader2, Plane, MapPin, Home, Flag } from "lucide-react";
 import { toast } from "sonner";
 
@@ -13,6 +14,7 @@ export default function NewSearch() {
   const navigate = useNavigate();
   const [purposes, setPurposes] = useState([]);
   const [form, setForm] = useState({ nationality: "", residence: "", destination: "", purpose: "tourism" });
+  const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -24,6 +26,10 @@ export default function NewSearch() {
 
   const submit = async (e) => {
     e.preventDefault();
+    if (!agreed) {
+      setError("Please acknowledge the disclaimer before running a lookup.");
+      return;
+    }
     setError("");
     setLoading(true);
     try {
@@ -77,8 +83,19 @@ export default function NewSearch() {
 
           <div className="p-6 border-t border-line bg-paper/60">
             {error && <p data-testid="lookup-error" className="text-sm text-rust mb-4 border-l-2 border-rust pl-3 bg-rust-bg py-1">{error}</p>}
-            <Button type="submit" disabled={loading} data-testid="run-lookup-btn"
-              className="w-full bg-forest hover:bg-forest-dark text-paper rounded-sm h-12 gap-2 text-base">
+
+            <label className="flex gap-3 items-start mb-5 border-l-4 border-rust bg-rust-bg p-4 cursor-pointer" data-testid="disclaimer-ack">
+              <Checkbox checked={agreed} onCheckedChange={(v) => setAgreed(!!v)} data-testid="disclaimer-checkbox"
+                className="mt-0.5 rounded-none border-rust data-[state=checked]:bg-rust data-[state=checked]:text-paper" />
+              <span className="text-sm text-ink/85 leading-relaxed">
+                I understand VisaScout provides <b>informational guidance only — not legal advice</b>. Results come from
+                official sources at the time of checking, visa rules change frequently, and approval is never guaranteed.
+                I will verify with the official authority before applying.
+              </span>
+            </label>
+
+            <Button type="submit" disabled={loading || !agreed} data-testid="run-lookup-btn"
+              className="w-full bg-forest hover:bg-forest-dark text-paper rounded-sm h-12 gap-2 text-base disabled:opacity-50">
               {loading ? <><Loader2 className="h-5 w-5 animate-spin" /> Starting live search…</> : <><Search className="h-5 w-5" /> Run live lookup</>}
             </Button>
             {loading && (

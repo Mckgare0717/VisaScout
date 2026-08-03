@@ -15,9 +15,5 @@ export default function ProtectedRoute({ children }) {
   }
   if (user === false) return <Navigate to="/login" replace />;
 
-  // First-use disclaimer gate
-  if (!user.seen_disclaimer && window.location.pathname !== "/disclaimer") {
-    return <Navigate to="/disclaimer" replace />;
-  }
   return children;
 }
