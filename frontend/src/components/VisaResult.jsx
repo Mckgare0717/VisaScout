@@ -76,20 +76,6 @@ export default function VisaResult({ search }) {
 
   return (
     <div className="space-y-8" data-testid="visa-result">
-      {/* Warning banner */}
-      {risky && (
-        <div className="border-l-4 border-rust bg-rust-bg p-5 sm:p-6 flex gap-4" data-testid="warning-banner">
-          <ShieldAlert className="h-6 w-6 text-rust shrink-0" />
-          <div>
-            <p className="font-serif text-lg text-rust">Please verify — consult a professional</p>
-            <p className="text-sm text-ink/80 mt-1 leading-relaxed">
-              {r.warning_message ||
-                "The official guidance for this combination is unclear or could not be fully confirmed. Please consult the destination's official immigration authority or a licensed immigration professional before acting."}
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* Category + summary */}
       <div className="bg-white paper-card">
         <div className="p-6 sm:p-8 border-b border-line">
@@ -154,6 +140,20 @@ export default function VisaResult({ search }) {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Warning banner — end of information section */}
+      {risky && (
+        <div className="border-l-4 border-rust bg-rust-bg p-5 sm:p-6 flex gap-4" data-testid="warning-banner">
+          <ShieldAlert className="h-6 w-6 text-rust shrink-0" />
+          <div>
+            <p className="font-serif text-lg text-rust">Please verify — consult a professional</p>
+            <p className="text-sm text-ink/80 mt-1 leading-relaxed">
+              {r.warning_message ||
+                "The official guidance for this combination is unclear or could not be fully confirmed. Please consult the destination's official immigration authority or a licensed immigration professional before acting."}
+            </p>
+          </div>
         </div>
       )}
 
