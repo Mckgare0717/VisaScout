@@ -1,7 +1,13 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { Button } from "../components/ui/button";
-import { Stamp, Search, ShieldCheck, FileText, Link2, Globe2, ArrowRight } from "lucide-react";
+import { Stamp, Search, ShieldCheck, FileText, Link2, Globe2, ArrowRight, Instagram, Globe, Mail } from "lucide-react";
+
+const XANRE = {
+  site: "https://xanretechltd.netlify.app/",
+  instagram: "https://www.instagram.com/xanretech?igsh=MWJjczN2YWh0c3cyMQ==",
+  email: "xanretech@gmail.com",
+};
 
 const HERO = "https://images.unsplash.com/photo-1687552626877-f4596995931c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwzfHxhaXJwb3J0JTIwdGVybWluYWwlMjBhcmNoaXRlY3R1cmV8ZW58MHx8fHwxNzg1NzA4ODMxfDA&ixlib=rb-4.1.0&q=85";
 
@@ -82,6 +88,40 @@ export default function Landing() {
           ))}
         </div>
       </section>
+
+      <footer className="border-t border-line bg-forest">
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-8 flex flex-col md:flex-row md:items-center justify-between gap-5">
+          <div className="flex items-center gap-2.5">
+            <span className="h-8 w-8 grid place-items-center bg-paper text-forest">
+              <Stamp className="h-4 w-4" />
+            </span>
+            <div>
+              <span className="font-serif text-lg text-paper">VisaScout</span>
+              <p className="font-mono text-[10px] uppercase tracking-widest text-paper/60">Informational · Not legal advice</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6" data-testid="landing-developer-credit">
+            <span className="font-mono text-[11px] uppercase tracking-widest text-paper/70">
+              Developed by <span className="text-paper">Xanre Tech LTD</span>
+            </span>
+            <div className="flex items-center gap-5">
+              <a href={XANRE.site} target="_blank" rel="noreferrer" data-testid="landing-xanre-website"
+                className="flex items-center gap-1.5 text-[11px] text-paper/70 hover:text-paper transition-colors">
+                <Globe className="h-3.5 w-3.5" /> Website
+              </a>
+              <a href={XANRE.instagram} target="_blank" rel="noreferrer" data-testid="landing-xanre-instagram"
+                className="flex items-center gap-1.5 text-[11px] text-paper/70 hover:text-paper transition-colors">
+                <Instagram className="h-3.5 w-3.5" /> Instagram
+              </a>
+              <a href={`mailto:${XANRE.email}`} data-testid="landing-xanre-email"
+                className="flex items-center gap-1.5 text-[11px] text-paper/70 hover:text-paper transition-colors">
+                <Mail className="h-3.5 w-3.5" /> {XANRE.email}
+              </a>
+            </div>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

@@ -2,7 +2,39 @@ import React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "./ui/button";
-import { Stamp, LogOut, Settings, LayoutGrid, Plus } from "lucide-react";
+import { Stamp, LogOut, Settings, LayoutGrid, Plus, Instagram, Globe, Mail } from "lucide-react";
+
+const XANRE = {
+  site: "https://xanretechltd.netlify.app/",
+  instagram: "https://www.instagram.com/xanretech?igsh=MWJjczN2YWh0c3cyMQ==",
+  email: "xanretech@gmail.com",
+};
+
+export function DeveloperCredit({ dark = false }) {
+  const base = dark ? "text-paper/70" : "text-muted2";
+  const hover = dark ? "hover:text-paper" : "hover:text-forest";
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-5" data-testid="developer-credit">
+      <span className={`font-mono text-[11px] uppercase tracking-widest ${base}`}>
+        Developed by <span className={dark ? "text-paper" : "text-forest"}>Xanre Tech LTD</span>
+      </span>
+      <div className="flex items-center gap-4">
+        <a href={XANRE.site} target="_blank" rel="noreferrer" data-testid="xanre-website"
+          className={`flex items-center gap-1.5 text-[11px] ${base} ${hover} transition-colors`}>
+          <Globe className="h-3.5 w-3.5" /> Website
+        </a>
+        <a href={XANRE.instagram} target="_blank" rel="noreferrer" data-testid="xanre-instagram"
+          className={`flex items-center gap-1.5 text-[11px] ${base} ${hover} transition-colors`}>
+          <Instagram className="h-3.5 w-3.5" /> Instagram
+        </a>
+        <a href={`mailto:${XANRE.email}`} data-testid="xanre-email"
+          className={`flex items-center gap-1.5 text-[11px] ${base} ${hover} transition-colors`}>
+          <Mail className="h-3.5 w-3.5" /> {XANRE.email}
+        </a>
+      </div>
+    </div>
+  );
+}
 
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
@@ -50,13 +82,18 @@ export default function Layout({ children }) {
       <main className="flex-1 w-full">{children}</main>
 
       <footer className="border-t border-line py-6 mt-10">
-        <div className="max-w-6xl mx-auto px-5 sm:px-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-          <p className="font-mono text-[11px] text-muted2">
-            Signed in as {user?.email}
-          </p>
-          <p className="text-[11px] text-muted2 max-w-md">
-            Informational only — not legal advice. Always verify with official government sources before applying.
-          </p>
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 flex flex-col gap-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <p className="font-mono text-[11px] text-muted2">
+              Signed in as {user?.email}
+            </p>
+            <p className="text-[11px] text-muted2 max-w-md">
+              Informational only — not legal advice. Always verify with official government sources before applying.
+            </p>
+          </div>
+          <div className="border-t border-line pt-4">
+            <DeveloperCredit />
+          </div>
         </div>
       </footer>
     </div>
