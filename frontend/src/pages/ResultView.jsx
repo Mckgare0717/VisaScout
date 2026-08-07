@@ -16,6 +16,12 @@ export default function ResultView() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [notifying, setNotifying] = useState(false);
   const pollRef = useRef(null);
+  const cancelledRef = useRef(false);
+  const attemptsRef = useRef(0);
+
+  // The backend times lookups out well before this; the cap is a safety net so
+  // the page never polls forever if a search record is somehow stuck.
+  const MAX_POLLS = 150; // ~7.5 minutes at 3s per poll
 
   const load = async () => {
     try {
@@ -28,17 +34,38 @@ export default function ResultView() {
     }
   };
 
-  useEffect(() => {
-    let cancelled = false;
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearTimeout(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  const startPolling = (onSettled) => {
+    stopPolling();
+    attemptsRef.current = 0;
     const tick = async () => {
       const d = await load();
-      if (cancelled) return;
+      if (cancelledRef.current) return;
       if (d && d.status === "processing") {
+        attemptsRef.current += 1;
+        if (attemptsRef.current >= MAX_POLLS) {
+          setSearch((s) => (s ? { ...s, status: "error", error: "The live search is taking longer than expected." } : s));
+          onSettled?.(null);
+          return;
+        }
         pollRef.current = setTimeout(tick, 3000);
+      } else {
+        onSettled?.(d);
       }
     };
     tick();
-    return () => { cancelled = true; if (pollRef.current) clearTimeout(pollRef.current); };
+  };
+
+  useEffect(() => {
+    cancelledRef.current = false;
+    startPolling();
+    return () => { cancelledRef.current = true; stopPolling(); };
     // eslint-disable-next-line
   }, [id]);
 
@@ -48,12 +75,10 @@ export default function ResultView() {
       const { data } = await api.post(`/visa/searches/${id}/rerun`);
       setSearch(data);
       toast.info("Re-checking against live sources…");
-      const tick = async () => {
-        const d = await load();
-        if (d && d.status === "processing") pollRef.current = setTimeout(tick, 3000);
-        else { setRerunning(false); if (d?.status === "done") toast.success("Updated with latest sources"); }
-      };
-      pollRef.current = setTimeout(tick, 3000);
+      startPolling((d) => {
+        setRerunning(false);
+        if (d?.status === "done") toast.success("Updated with latest sources");
+      });
     } catch (e) {
       toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Re-run failed");
       setRerunning(false);
