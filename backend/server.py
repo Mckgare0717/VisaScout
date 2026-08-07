@@ -3,10 +3,11 @@ import io
 import uuid
 import asyncio
 import logging
+import requests
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -18,7 +19,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 from auth import (
     hash_password, verify_password, create_access_token,
-    make_get_current_user, seed_demo_user,
+    make_get_current_user, make_get_current_admin, seed_demo_user,
 )
 from visa_service import run_visa_lookup, PURPOSE_LABELS
 
@@ -33,8 +34,11 @@ app = FastAPI(title="VisaScout API")
 api = APIRouter(prefix="/api")
 
 get_current_user = make_get_current_user(db)
+get_current_admin = make_get_current_admin(db)
 
 OUTDATED_DAYS = 30
+EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+SESSION_DAYS = 7
 
 
 # ---------- Models ----------
@@ -61,6 +65,9 @@ def public_user(u: dict) -> dict:
         "id": u["id"], "email": u["email"], "name": u.get("name", ""),
         "notify_outdated": u.get("notify_outdated", True),
         "seen_disclaimer": u.get("seen_disclaimer", False),
+        "role": u.get("role", "user"),
+        "provider": u.get("provider", "email"),
+        "picture": u.get("picture"),
     }
 
 
@@ -85,6 +92,9 @@ async def register(body: RegisterIn):
         "email": email,
         "name": body.name,
         "password_hash": hash_password(body.password),
+        "role": "user",
+        "provider": "email",
+        "picture": None,
         "notify_outdated": True,
         "seen_disclaimer": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -92,6 +102,64 @@ async def register(body: RegisterIn):
     await db.users.insert_one(user)
     token = create_access_token(user["id"], email)
     return {"token": token, "user": public_user(user)}
+
+
+class GoogleSessionIn(BaseModel):
+    session_id: str
+
+
+@api.post("/auth/google")
+async def google_auth(body: GoogleSessionIn, response: Response):
+    # Exchange the one-time Emergent session_id for the user's profile + persistent session token.
+    try:
+        r = await asyncio.to_thread(
+            lambda: requests.get(EMERGENT_SESSION_URL, headers={"X-Session-ID": body.session_id}, timeout=15)
+        )
+    except Exception as e:
+        logger.error("emergent session-data call failed: %s", e)
+        raise HTTPException(status_code=502, detail="Google sign-in service unavailable")
+    if r.status_code != 200:
+        raise HTTPException(status_code=401, detail="Google sign-in failed or expired. Please try again.")
+    data = r.json()
+    email = (data.get("email") or "").lower()
+    if not email:
+        raise HTTPException(status_code=401, detail="Google account did not return an email")
+
+    user = await db.users.find_one({"email": email})
+    if user is None:
+        admin_emails = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
+        user = {
+            "id": str(uuid.uuid4()),
+            "email": email,
+            "name": data.get("name") or email.split("@")[0],
+            "password_hash": None,
+            "role": "admin" if email in admin_emails else "user",
+            "provider": "google",
+            "picture": data.get("picture"),
+            "notify_outdated": True,
+            "seen_disclaimer": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.users.insert_one(dict(user))
+    else:
+        upd = {"provider": user.get("provider") or "google"}
+        if data.get("picture") and not user.get("picture"):
+            upd["picture"] = data["picture"]
+        await db.users.update_one({"id": user["id"]}, {"$set": upd})
+        user.update(upd)
+
+    session_token = data.get("session_token") or str(uuid.uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
+    await db.user_sessions.update_one(
+        {"session_token": session_token},
+        {"$set": {"user_id": user["id"], "session_token": session_token,
+                  "expires_at": expires_at.isoformat(),
+                  "created_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    response.set_cookie(key="session_token", value=session_token, httponly=True,
+                        secure=True, samesite="none", max_age=SESSION_DAYS * 86400, path="/")
+    return {"token": session_token, "user": public_user(user)}
 
 
 @api.post("/auth/login")
@@ -121,6 +189,46 @@ async def update_prefs(request: Request, user: dict = Depends(get_current_user))
     notify = bool(body.get("notify_outdated", user.get("notify_outdated", True)))
     await db.users.update_one({"id": user["id"]}, {"$set": {"notify_outdated": notify}})
     return {"notify_outdated": notify}
+
+
+@api.post("/auth/logout")
+async def logout(request: Request, response: Response, user: dict = Depends(get_current_user)):
+    token = request.headers.get("Authorization", "")[7:] or request.cookies.get("session_token")
+    if token:
+        await db.user_sessions.delete_one({"session_token": token})
+    response.delete_cookie("session_token", path="/")
+    return {"ok": True}
+
+
+# ---------- Admin ----------
+@api.get("/admin/users")
+async def admin_users(admin: dict = Depends(get_current_admin)):
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(2000)
+    counts = {}
+    async for doc in db.searches.aggregate([{"$group": {"_id": "$user_id", "c": {"$sum": 1}}}]):
+        counts[doc["_id"]] = doc["c"]
+    for u in users:
+        u["search_count"] = counts.get(u["id"], 0)
+        u.setdefault("role", "user")
+        u.setdefault("provider", "email")
+        u.setdefault("picture", None)
+        u.setdefault("notify_outdated", True)
+    return users
+
+
+@api.get("/admin/stats")
+async def admin_stats(admin: dict = Depends(get_current_admin)):
+    total_users = await db.users.count_documents({})
+    total_searches = await db.searches.count_documents({})
+    google_users = await db.users.count_documents({"provider": "google"})
+    admins = await db.users.count_documents({"role": "admin"})
+    return {
+        "total_users": total_users,
+        "total_searches": total_searches,
+        "google_users": google_users,
+        "email_users": total_users - google_users,
+        "admins": admins,
+    }
 
 
 # ---------- Visa ----------
