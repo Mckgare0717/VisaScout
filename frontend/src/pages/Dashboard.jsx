@@ -20,6 +20,14 @@ export default function Dashboard() {
   };
   useEffect(() => { load(); }, []);
 
+  // Keep refreshing while any lookup is still running so cards don't stay
+  // stuck on "Searching…" until a manual reload.
+  useEffect(() => {
+    if (!searches || !searches.some((s) => s.status === "processing")) return;
+    const t = setTimeout(load, 5000);
+    return () => clearTimeout(t);
+  }, [searches]);
+
   const remove = async (id, e) => {
     e.preventDefault();
     e.stopPropagation();

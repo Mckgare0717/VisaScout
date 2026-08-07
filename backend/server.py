@@ -1,10 +1,12 @@
 import os
 import io
+import html
 import uuid
 import asyncio
 import logging
 import requests
 from pathlib import Path
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response
@@ -12,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, EmailStr, Field
 
 ROOT_DIR = Path(__file__).parent
@@ -30,15 +33,54 @@ mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
-app = FastAPI(title="VisaScout API")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await db.users.create_index("email", unique=True)
+    await db.searches.create_index("user_id")
+    await db.user_sessions.create_index("session_token", unique=True)
+    # TTL cleanup for expired sessions (applies to docs where expires_at is a BSON date).
+    await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
+    # Background lookup tasks do not survive a restart: anything still marked
+    # "processing" at boot is dead and would otherwise spin in the UI forever.
+    stale = await db.searches.update_many(
+        {"status": "processing"},
+        {"$set": {"status": "error",
+                  "error": "The search was interrupted by a server restart. Please re-run it."}},
+    )
+    if stale.modified_count:
+        logger.info("Marked %d interrupted searches as errored", stale.modified_count)
+    await seed_demo_user(db)
+    logger.info("VisaScout ready")
+    yield
+    client.close()
+
+
+app = FastAPI(title="VisaScout API", lifespan=lifespan)
 api = APIRouter(prefix="/api")
 
 get_current_user = make_get_current_user(db)
 get_current_admin = make_get_current_admin(db)
 
 OUTDATED_DAYS = 30
-EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+EMERGENT_SESSION_URL = os.environ.get(
+    "EMERGENT_SESSION_URL",
+    "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+)
 SESSION_DAYS = 7
+LOOKUP_TIMEOUT_SECONDS = 300
+MAX_CONCURRENT_LOOKUPS_PER_USER = 3
+NOTIFY_COOLDOWN_HOURS = 24
+
+# Keep strong references to background lookup tasks: asyncio only holds a weak
+# reference to tasks, so an un-referenced task can be garbage-collected mid-run.
+_bg_tasks: set = set()
+
+
+def _spawn_lookup(search_id: str, nationality: str, residence: str, destination: str, purpose: str):
+    task = asyncio.create_task(_process_lookup(search_id, nationality, residence, destination, purpose))
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
 
 # ---------- Models ----------
@@ -78,15 +120,19 @@ def _days_old(iso: str) -> int:
             dt = dt.replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - dt).days
     except Exception:
-        return 0
+        # An unparseable timestamp must read as stale, not fresh — freshness
+        # claims are the product's core promise.
+        return OUTDATED_DAYS
+
+
+def _freshness_date(d: dict) -> str:
+    return d.get("checked_at") or d.get("created_at") or ""
 
 
 # ---------- Auth ----------
 @api.post("/auth/register")
 async def register(body: RegisterIn):
     email = body.email.lower()
-    if await db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="An account with this email already exists")
     user = {
         "id": str(uuid.uuid4()),
         "email": email,
@@ -99,7 +145,12 @@ async def register(body: RegisterIn):
         "seen_disclaimer": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    await db.users.insert_one(user)
+    try:
+        await db.users.insert_one(user)
+    except DuplicateKeyError:
+        # The unique index is the authority — a pre-flight find_one would still
+        # race with a concurrent registration for the same email.
+        raise HTTPException(status_code=400, detail="An account with this email already exists")
     token = create_access_token(user["id"], email)
     return {"token": token, "user": public_user(user)}
 
@@ -150,10 +201,11 @@ async def google_auth(body: GoogleSessionIn, response: Response):
 
     session_token = data.get("session_token") or str(uuid.uuid4())
     expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)
+    # Stored as a BSON date (not ISO string) so the TTL index reaps expired sessions.
     await db.user_sessions.update_one(
         {"session_token": session_token},
         {"$set": {"user_id": user["id"], "session_token": session_token,
-                  "expires_at": expires_at.isoformat(),
+                  "expires_at": expires_at,
                   "created_at": datetime.now(timezone.utc).isoformat()}},
         upsert=True,
     )
@@ -166,7 +218,7 @@ async def google_auth(body: GoogleSessionIn, response: Response):
 async def login(body: LoginIn):
     email = body.email.lower()
     user = await db.users.find_one({"email": email})
-    if not user or not verify_password(body.password, user["password_hash"]):
+    if not user or not verify_password(body.password, user.get("password_hash")):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token(user["id"], email)
     return {"token": token, "user": public_user(user)}
@@ -193,7 +245,8 @@ async def update_prefs(request: Request, user: dict = Depends(get_current_user))
 
 @api.post("/auth/logout")
 async def logout(request: Request, response: Response, user: dict = Depends(get_current_user)):
-    token = request.headers.get("Authorization", "")[7:] or request.cookies.get("session_token")
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else request.cookies.get("session_token")
     if token:
         await db.user_sessions.delete_one({"session_token": token})
     response.delete_cookie("session_token", path="/")
@@ -240,23 +293,44 @@ async def purposes():
 async def _process_lookup(search_id: str, nationality: str, residence: str, destination: str, purpose: str):
     """Run the live web search in the background so long requests don't hit the gateway timeout."""
     try:
-        result = await run_visa_lookup(nationality, residence, destination, purpose)
+        result = await asyncio.wait_for(
+            run_visa_lookup(nationality, residence, destination, purpose, search_id=search_id),
+            timeout=LOOKUP_TIMEOUT_SECONDS,
+        )
         await db.searches.update_one(
             {"id": search_id},
             {"$set": {"result": result, "status": "done", "error": None,
-                      "created_at": datetime.now(timezone.utc).isoformat()}},
+                      "checked_at": datetime.now(timezone.utc).isoformat()}},
         )
+    except asyncio.TimeoutError:
+        logger.error("visa lookup %s timed out after %ss", search_id, LOOKUP_TIMEOUT_SECONDS)
+        await db.searches.update_one(
+            {"id": search_id},
+            {"$set": {"status": "error",
+                      "error": "The live source search took too long to complete."}})
     except Exception as e:
         logger.exception("background visa lookup failed")
         await db.searches.update_one(
             {"id": search_id}, {"$set": {"status": "error", "error": str(e)}})
 
 
+async def _ensure_lookup_capacity(user_id: str):
+    # Each lookup fans out into paid LLM + web-search calls; cap in-flight work per user.
+    in_flight = await db.searches.count_documents({"user_id": user_id, "status": "processing"})
+    if in_flight >= MAX_CONCURRENT_LOOKUPS_PER_USER:
+        raise HTTPException(
+            status_code=429,
+            detail="You already have several searches in progress. Please wait for them to finish.",
+        )
+
+
 @api.post("/visa/lookup")
 async def visa_lookup(body: LookupIn, user: dict = Depends(get_current_user)):
     if body.purpose not in PURPOSE_LABELS:
         raise HTTPException(status_code=400, detail="Invalid purpose of travel")
+    await _ensure_lookup_capacity(user["id"])
 
+    now = datetime.now(timezone.utc).isoformat()
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
@@ -268,10 +342,11 @@ async def visa_lookup(body: LookupIn, user: dict = Depends(get_current_user)):
         "result": None,
         "status": "processing",
         "error": None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": now,
+        "checked_at": now,
     }
     await db.searches.insert_one(dict(doc))
-    asyncio.create_task(_process_lookup(doc["id"], body.nationality, body.residence, body.destination, body.purpose))
+    _spawn_lookup(doc["id"], body.nationality, body.residence, body.destination, body.purpose)
     doc.pop("_id", None)
     doc["days_old"] = 0
     doc["outdated"] = False
@@ -283,7 +358,7 @@ async def list_searches(user: dict = Depends(get_current_user)):
     docs = await db.searches.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
     for d in docs:
         d.setdefault("status", "done" if d.get("result") else "processing")
-        d["days_old"] = _days_old(d["created_at"])
+        d["days_old"] = _days_old(_freshness_date(d))
         d["outdated"] = d["status"] == "done" and d["days_old"] >= OUTDATED_DAYS
     return docs
 
@@ -294,7 +369,7 @@ async def get_search(search_id: str, user: dict = Depends(get_current_user)):
     if not d:
         raise HTTPException(status_code=404, detail="Search not found")
     d.setdefault("status", "done" if d.get("result") else "processing")
-    d["days_old"] = _days_old(d["created_at"])
+    d["days_old"] = _days_old(_freshness_date(d))
     d["outdated"] = d["status"] == "done" and d["days_old"] >= OUTDATED_DAYS
     return d
 
@@ -304,8 +379,11 @@ async def rerun_search(search_id: str, user: dict = Depends(get_current_user)):
     old = await db.searches.find_one({"id": search_id, "user_id": user["id"]}, {"_id": 0})
     if not old:
         raise HTTPException(status_code=404, detail="Search not found")
+    if old.get("status") == "processing":
+        raise HTTPException(status_code=409, detail="This search is already being re-checked.")
+    await _ensure_lookup_capacity(user["id"])
     await db.searches.update_one({"id": search_id}, {"$set": {"status": "processing", "error": None}})
-    asyncio.create_task(_process_lookup(search_id, old["nationality"], old["residence"], old["destination"], old["purpose"]))
+    _spawn_lookup(search_id, old["nationality"], old["residence"], old["destination"], old["purpose"])
     old["status"] = "processing"
     old["days_old"] = 0
     old["outdated"] = False
@@ -327,7 +405,9 @@ async def export_pdf(search_id: str, user: dict = Depends(get_current_user)):
     if not d:
         raise HTTPException(status_code=404, detail="Search not found")
     pdf_bytes = _build_pdf(d)
-    filename = f"visascout-{d['destination'].replace(' ', '_').lower()}-checklist.pdf"
+    # Destination is free text; strip anything that could break the header.
+    safe_dest = "".join(c if c.isalnum() or c in "-_" else "_" for c in d["destination"].replace(" ", "_").lower())
+    filename = f"visascout-{safe_dest or 'visa'}-checklist.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
@@ -336,11 +416,17 @@ async def export_pdf(search_id: str, user: dict = Depends(get_current_user)):
 
 
 def _build_pdf(d: dict) -> bytes:
+    from xml.sax.saxutils import escape as _xml_escape
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.colors import HexColor
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+
+    def esc(value) -> str:
+        # Paragraph() parses its text as XML-like markup; raw "<" or "&" in
+        # user/model-supplied strings would crash or alter the render.
+        return _xml_escape(str(value if value is not None else ""))
 
     r = d.get("result", {})
     buf = io.BytesIO()
@@ -361,18 +447,18 @@ def _build_pdf(d: dict) -> bytes:
     story = []
     story.append(Paragraph("VisaScout — Document Checklist", h1))
     story.append(Paragraph(
-        f"{d.get('nationality','')} passport &rarr; {d.get('destination','')} &nbsp;|&nbsp; "
-        f"{d.get('purpose_label','')} &nbsp;|&nbsp; Residence: {d.get('residence','')}", sub))
+        f"{esc(d.get('nationality',''))} passport &rarr; {esc(d.get('destination',''))} &nbsp;|&nbsp; "
+        f"{esc(d.get('purpose_label',''))} &nbsp;|&nbsp; Residence: {esc(d.get('residence',''))}", sub))
     story.append(HRFlowable(width="100%", color=green, thickness=1.2, spaceAfter=8))
 
-    story.append(Paragraph(f"Visa category: {r.get('visa_category','Unknown')}", h2))
+    story.append(Paragraph(f"Visa category: {esc(r.get('visa_category','Unknown'))}", h2))
     if r.get("requirements_summary"):
-        story.append(Paragraph(r["requirements_summary"], body))
+        story.append(Paragraph(esc(r["requirements_summary"]), body))
 
     if r.get("consult_professional") or r.get("ambiguous") or not r.get("found_reliable_source", True):
         story.append(Spacer(1, 6))
         story.append(Paragraph(
-            "⚠ " + (r.get("warning_message") or "Requirements may be ambiguous. Consult an immigration professional."),
+            "⚠ " + esc(r.get("warning_message") or "Requirements may be ambiguous. Consult an immigration professional."),
             warn))
 
     labels = {
@@ -386,29 +472,31 @@ def _build_pdf(d: dict) -> bytes:
             continue
         story.append(Paragraph(label, h2))
         for it in items:
-            txt = f"&#9744; <b>{it.get('item','')}</b>"
+            txt = f"&#9744; <b>{esc(it.get('item',''))}</b>"
             if it.get("detail"):
-                txt += f" — {it['detail']}"
+                txt += f" — {esc(it['detail'])}"
             story.append(Paragraph(txt, item))
 
     if r.get("rejection_reasons"):
         story.append(Paragraph("Common rejection reasons", h2))
         for rr in r["rejection_reasons"]:
-            story.append(Paragraph(f"&bull; {rr}", item))
+            story.append(Paragraph(f"&bull; {esc(rr)}", item))
 
     pt, fee = r.get("processing_time"), r.get("fee")
     if pt or fee:
         story.append(Paragraph("Processing & Fees", h2))
         if pt:
-            story.append(Paragraph(f"Processing time: <b>{pt.get('value','')}</b> (checked {pt.get('date_checked','')})", body))
+            story.append(Paragraph(f"Processing time: <b>{esc(pt.get('value',''))}</b> (checked {esc(pt.get('date_checked',''))})", body))
         if fee:
-            story.append(Paragraph(f"Fee: <b>{fee.get('value','')}</b> (checked {fee.get('date_checked','')})", body))
+            story.append(Paragraph(f"Fee: <b>{esc(fee.get('value',''))}</b> (checked {esc(fee.get('date_checked',''))})", body))
 
     sources = r.get("sources") or []
     if sources:
         story.append(Paragraph("Sources", h2))
         for s in sources:
-            story.append(Paragraph(f"&bull; {s.get('title','') or s.get('url','')} — {s.get('url','')} (accessed {s.get('access_date','')})", tiny))
+            story.append(Paragraph(
+                f"&bull; {esc(s.get('title','') or s.get('url',''))} — {esc(s.get('url',''))} "
+                f"(accessed {esc(s.get('access_date',''))})", tiny))
 
     story.append(Spacer(1, 14))
     story.append(HRFlowable(width="100%", color=muted, thickness=0.5, spaceAfter=6))
@@ -427,6 +515,19 @@ async def notify_outdated(search_id: str, user: dict = Depends(get_current_user)
     d = await db.searches.find_one({"id": search_id, "user_id": user["id"]}, {"_id": 0})
     if not d:
         raise HTTPException(status_code=404, detail="Search not found")
+    if not user.get("notify_outdated", True):
+        raise HTTPException(status_code=400, detail="Email alerts are disabled in your settings.")
+    last = d.get("last_notified_at")
+    if last:
+        try:
+            last_dt = datetime.fromisoformat(last)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - last_dt < timedelta(hours=NOTIFY_COOLDOWN_HOURS):
+                raise HTTPException(status_code=429,
+                                    detail="An email for this search was already sent in the last 24 hours.")
+        except ValueError:
+            pass
     api_key = os.environ.get("RESEND_API_KEY", "").strip()
     if not api_key:
         raise HTTPException(status_code=400, detail="Email notifications are not configured yet (missing RESEND_API_KEY).")
@@ -434,13 +535,17 @@ async def notify_outdated(search_id: str, user: dict = Depends(get_current_user)
     import resend
     resend.api_key = api_key
     sender = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
-    days = _days_old(d["created_at"])
-    html = f"""
+    days = _days_old(_freshness_date(d))
+    name = html.escape(user.get("name") or "there")
+    nationality = html.escape(d.get("nationality", ""))
+    destination = html.escape(d.get("destination", ""))
+    purpose_label = html.escape(d.get("purpose_label", ""))
+    email_html = f"""
     <div style="font-family:Arial,sans-serif;color:#171A1C">
       <h2 style="color:#1A4331">VisaScout — Your saved search may be outdated</h2>
-      <p>Hi {user.get('name','there')},</p>
-      <p>Your saved visa search for <b>{d['nationality']} &rarr; {d['destination']}</b>
-      ({d.get('purpose_label','')}) was last checked <b>{days} days ago</b>.</p>
+      <p>Hi {name},</p>
+      <p>Your saved visa search for <b>{nationality} &rarr; {destination}</b>
+      ({purpose_label}) was last checked <b>{days} days ago</b>.</p>
       <p>Visa rules change frequently. We recommend re-running this search to confirm the latest
       official requirements, fees and processing times.</p>
       <p style="color:#5A6B62;font-size:12px">This is an informational notice, not legal advice.</p>
@@ -448,14 +553,17 @@ async def notify_outdated(search_id: str, user: dict = Depends(get_current_user)
     params = {
         "from": sender,
         "to": [user["email"]],
-        "subject": f"Visa info for {d['destination']} may be outdated",
-        "html": html,
+        "subject": f"Visa info for {d.get('destination', 'your destination')} may be outdated",
+        "html": email_html,
     }
     try:
         email = await asyncio.to_thread(resend.Emails.send, params)
     except Exception as e:
         logger.error("resend failed: %s", e)
         raise HTTPException(status_code=400, detail=f"Failed to send email: {str(e)}")
+    await db.searches.update_one(
+        {"id": search_id},
+        {"$set": {"last_notified_at": datetime.now(timezone.utc).isoformat()}})
     return {"status": "sent", "email_id": email.get("id") if isinstance(email, dict) else None}
 
 
@@ -466,23 +574,23 @@ async def root():
 
 app.include_router(api)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.on_event("startup")
-async def startup():
-    await db.users.create_index("email", unique=True)
-    await db.searches.create_index("user_id")
-    await seed_demo_user(db)
-    logger.info("VisaScout ready")
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    client.close()
+# Browsers reject "Access-Control-Allow-Origin: *" on credentialed requests, so a
+# wildcard origin list only works without credentials. Pin CORS_ORIGINS to the real
+# frontend origin(s) in production to enable the cookie-based session flow.
+_cors_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+if not _cors_origins or _cors_origins == ["*"]:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )

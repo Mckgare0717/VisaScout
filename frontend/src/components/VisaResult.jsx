@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Checkbox } from "../components/ui/checkbox";
 import {
   ChevronDown, ShieldAlert, ExternalLink, Clock, Banknote, FileCheck2,
@@ -22,10 +22,26 @@ function SourceBadge({ date }) {
   );
 }
 
-function ChecklistCard({ catKey, items }) {
+function ChecklistCard({ catKey, items, searchId }) {
   const meta = CATEGORY_META[catKey];
+  const storageKey = `vs_checklist_${searchId}_${catKey}`;
   const [open, setOpen] = useState(catKey === "identity");
-  const [checked, setChecked] = useState({});
+  // Ticked items survive refreshes and navigation — the checklist is meant to
+  // be worked through over days, not in a single sitting.
+  const [checked, setChecked] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(storageKey)) || {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(checked));
+    } catch {
+      // Storage may be full or blocked; ticking still works for the session.
+    }
+  }, [checked, storageKey]);
   const doneCount = Object.values(checked).filter(Boolean).length;
   const Icon = meta.icon;
 
@@ -120,7 +136,7 @@ export default function VisaResult({ search }) {
         </div>
         <div className="space-y-3" data-testid="checklist">
           {Object.keys(CATEGORY_META).map((k) => (
-            <ChecklistCard key={k} catKey={k} items={checklist[k] || []} />
+            <ChecklistCard key={k} catKey={k} items={checklist[k] || []} searchId={search.id} />
           ))}
         </div>
       </div>

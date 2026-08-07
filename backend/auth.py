@@ -14,7 +14,10 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
 
 
-def verify_password(plain: str, hashed: str) -> bool:
+def verify_password(plain: str, hashed) -> bool:
+    if not hashed:
+        # Social-login accounts have no password; never let them match.
+        return False
     try:
         return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
     except Exception:
@@ -113,16 +116,20 @@ async def seed_demo_user(db):
         })
     else:
         updates = {}
-        if not verify_password(password, existing["password_hash"]):
+        if not verify_password(password, existing.get("password_hash")):
             updates["password_hash"] = hash_password(password)
         if existing.get("role") is None:
             updates["role"] = "user"
         if updates:
             await db.users.update_one({"email": email}, {"$set": updates})
 
-    # Admin user
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@visascout.app")
-    admin_password = os.environ.get("ADMIN_PASSWORD", "Admin1234!")
+    # Admin user — only seeded when credentials are explicitly configured.
+    # No hard-coded fallback: a well-known default password would be an open
+    # admin backdoor on any deployment that forgot to set the env vars.
+    admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+    admin_password = os.environ.get("ADMIN_PASSWORD", "")
+    if not admin_email or not admin_password:
+        return
     admin = await db.users.find_one({"email": admin_email})
     if admin is None:
         await db.users.insert_one({
@@ -139,7 +146,7 @@ async def seed_demo_user(db):
         })
     else:
         updates = {"role": "admin"}
-        if not verify_password(admin_password, admin["password_hash"]):
+        if not verify_password(admin_password, admin.get("password_hash")):
             updates["password_hash"] = hash_password(admin_password)
         await db.users.update_one({"email": admin_email}, {"$set": updates})
 

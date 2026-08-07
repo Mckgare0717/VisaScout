@@ -1,5 +1,6 @@
 import os
 import json
+import uuid
 import logging
 from datetime import datetime, timezone
 from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -85,7 +86,8 @@ def _extract_json(text: str) -> dict:
     return json.loads(t[start:end + 1])
 
 
-async def run_visa_lookup(nationality: str, residence: str, destination: str, purpose: str) -> dict:
+async def run_visa_lookup(nationality: str, residence: str, destination: str, purpose: str,
+                          search_id: str | None = None) -> dict:
     purpose_label = PURPOSE_LABELS.get(purpose, purpose)
     query = (
         f"I hold a passport from {nationality}. I currently reside in {residence}. "
@@ -96,7 +98,10 @@ async def run_visa_lookup(nationality: str, residence: str, destination: str, pu
     chat = (
         LlmChat(
             api_key=os.environ["EMERGENT_LLM_KEY"],
-            session_id=f"visa-{nationality}-{destination}-{purpose}",
+            # One chat session per lookup: a session id derived from the route alone
+            # would be shared by every user running the same pairing, accumulating
+            # unrelated history across lookups.
+            session_id=f"visa-{search_id or uuid.uuid4()}",
             system_message=build_system_prompt(),
         )
         .with_model("anthropic", "claude-sonnet-5")
@@ -150,9 +155,16 @@ async def run_visa_lookup(nationality: str, residence: str, destination: str, pu
                 norm.append({"item": it, "detail": ""})
         checklist[cat] = norm
     data["checklist"] = checklist
-    data.setdefault("rejection_reasons", [])
-    data.setdefault("processing_time", None)
-    data.setdefault("fee", None)
-    data.setdefault("application_portal_url", None)
-    data.setdefault("sources", [])
+    rr = data.get("rejection_reasons")
+    data["rejection_reasons"] = [str(x) for x in rr] if isinstance(rr, list) else []
+    for money_key in ("processing_time", "fee"):
+        val = data.get(money_key)
+        data[money_key] = val if isinstance(val, dict) else None
+    portal = data.get("application_portal_url")
+    data["application_portal_url"] = portal if isinstance(portal, str) and portal else None
+    srcs = data.get("sources")
+    data["sources"] = [
+        {"url": str(s.get("url", "")), "title": str(s.get("title", "")), "access_date": str(s.get("access_date", ""))}
+        for s in srcs if isinstance(s, dict)
+    ] if isinstance(srcs, list) else []
     return data
