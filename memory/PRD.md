@@ -7,7 +7,7 @@ Build VisaScout, a global visa requirements assistant (web + mobile). Users ente
 - **Frontend:** React 19 (CRA + craco), Tailwind, shadcn/ui, react-router, sonner. "Official document" theme (Playfair Display + IBM Plex Sans/Mono; bone-white + forest-green + rust warning).
 - **Backend:** FastAPI, all routes under `/api`. MongoDB via motor.
 - **Auth:** email + password, bcrypt hashing, JWT bearer tokens (localStorage `vs_token`). Seeded demo account.
-- **AI/live search:** Claude Sonnet 5 via Emergent universal key (`emergentintegrations` `LlmChat` + Anthropic hosted `web_search_20250305` tool). Returns structured JSON per a strict schema with guardrail fallback.
+- **AI/live search:** Claude Sonnet 5 via the Anthropic API directly (`anthropic` SDK + hosted `web_search_20260209` tool, authenticated with `ANTHROPIC_API_KEY`). Returns structured JSON per a strict schema with guardrail fallback.
 - **Async jobs:** `/api/visa/lookup` and `/rerun` create a `processing` search and run the live search in a background task (`asyncio.create_task`) to avoid the 60s Cloudflare gateway timeout; frontend polls `GET /api/visa/searches/{id}` every 3s until `done`/`error`.
 
 ## User Personas

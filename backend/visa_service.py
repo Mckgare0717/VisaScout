@@ -1,11 +1,28 @@
 import os
 import json
-import uuid
 import logging
 from datetime import datetime, timezone
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+from anthropic import AsyncAnthropic
 
 logger = logging.getLogger(__name__)
+
+MODEL = "claude-sonnet-5"
+WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 6}
+# Server-side web search runs in an API-side loop that can pause with
+# stop_reason "pause_turn"; cap how many times we resume it.
+MAX_CONTINUATIONS = 5
+
+_client = None
+
+
+def _get_client() -> AsyncAnthropic:
+    # Lazy so the module imports cleanly before the env file is loaded,
+    # and a missing key fails the lookup (visible in the UI) rather than boot.
+    global _client
+    if _client is None:
+        _client = AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    return _client
 
 PURPOSE_LABELS = {
     "tourism": "Tourism / Visit",
@@ -95,26 +112,28 @@ async def run_visa_lookup(nationality: str, residence: str, destination: str, pu
         f"Research the current official visa requirements for this exact pairing and return the JSON object."
     )
 
-    chat = (
-        LlmChat(
-            api_key=os.environ["EMERGENT_LLM_KEY"],
-            # One chat session per lookup: a session id derived from the route alone
-            # would be shared by every user running the same pairing, accumulating
-            # unrelated history across lookups.
-            session_id=f"visa-{search_id or uuid.uuid4()}",
-            system_message=build_system_prompt(),
+    client = _get_client()
+    messages = [{"role": "user", "content": query}]
+    response = None
+    for _ in range(MAX_CONTINUATIONS):
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=16000,
+            system=build_system_prompt(),
+            tools=[WEB_SEARCH_TOOL],
+            messages=messages,
         )
-        .with_model("anthropic", "claude-sonnet-5")
-        .with_tools(tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 6}])
-        .with_params(max_tokens=8000)
-    )
+        if response.stop_reason != "pause_turn":
+            break
+        # The API detects the trailing server-tool block and resumes the search.
+        messages.append({"role": "assistant", "content": response.content})
 
-    resp = await chat.send_message_with_tools(UserMessage(text=query))
-    content = resp.content or ""
+    content = "".join(block.text for block in response.content if block.type == "text")
     try:
         data = _extract_json(content)
     except Exception as e:
-        logger.error("Failed to parse visa JSON: %s -- raw: %s", e, content[:500])
+        logger.error("Failed to parse visa JSON for %s (stop_reason=%s): %s -- raw: %s",
+                     search_id, response.stop_reason, e, content[:500])
         # Guardrail fallback: never guess
         data = {
             "found_reliable_source": False,

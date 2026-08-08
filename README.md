@@ -10,7 +10,7 @@
 
 | Part | Stack | Path |
 |---|---|---|
-| Backend | FastAPI + MongoDB (Motor), LLM lookups via `emergentintegrations` (Claude + web search) | `backend/` |
+| Backend | FastAPI + MongoDB (Motor), LLM lookups via the Anthropic API (Claude + server-side web search) | `backend/` |
 | Frontend | React (CRA + CRACO), Tailwind, shadcn/ui | `frontend/` |
 
 ## Backend setup
@@ -28,7 +28,7 @@ uvicorn server:app --reload --port 8001
 | `MONGO_URL` | yes | MongoDB connection string |
 | `DB_NAME` | yes | Database name |
 | `JWT_SECRET` | yes | Secret for signing access tokens |
-| `EMERGENT_LLM_KEY` | yes | Key for the LLM/web-search integration used by lookups |
+| `ANTHROPIC_API_KEY` | yes | Anthropic API key ([console.anthropic.com](https://console.anthropic.com)) — powers the live visa lookups (Claude + web search) |
 | `CORS_ORIGINS` | prod | Comma-separated allowed frontend origins. Unset/`*` = wildcard **without** credentials (cookie auth disabled) |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | no | If **both** are set, an admin account is seeded at startup. No defaults — omitting them means no admin is created |
 | `DEMO_EMAIL` / `DEMO_PASSWORD` | no | Demo account seeded at startup (defaults to the public demo credentials shown on the landing page) |
