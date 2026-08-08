@@ -36,7 +36,8 @@ uvicorn server:app --reload --port 8001
 | `CORS_ORIGINS` | prod | Comma-separated allowed frontend origins. Unset/`*` = wildcard **without** credentials (cookie auth disabled) |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | no | If **both** are set, an admin account is seeded at startup. No defaults — omitting them means no admin is created |
 | `DEMO_EMAIL` / `DEMO_PASSWORD` | no | Demo account seeded at startup (defaults to the public demo credentials shown on the landing page) |
-| `RESEND_API_KEY` / `SENDER_EMAIL` | no | Enables outdated-search email notifications via Resend |
+| `RESEND_API_KEY` / `SENDER_EMAIL` | no | Enables outbound email (outdated-search notices + feedback) via Resend. Without it, feedback is still stored in MongoDB, just not emailed |
+| `FEEDBACK_EMAIL` | no | Where the in-app feedback form delivers (default `xanretech@gmail.com`) |
 | `EMERGENT_SESSION_URL` | no | Override for the Emergent Google-auth session exchange endpoint |
 
 ## Frontend setup

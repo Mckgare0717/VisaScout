@@ -39,6 +39,7 @@ async def lifespan(_app: FastAPI):
     await db.users.create_index("email", unique=True)
     await db.searches.create_index("user_id")
     await db.user_sessions.create_index("session_token", unique=True)
+    await db.feedback.create_index([("rate_key", 1), ("created_at", -1)])
     # TTL cleanup for expired sessions (applies to docs where expires_at is a BSON date).
     await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
     # Background lookup tasks do not survive a restart: anything still marked
@@ -71,6 +72,14 @@ SESSION_DAYS = 7
 LOOKUP_TIMEOUT_SECONDS = 300
 MAX_CONCURRENT_LOOKUPS_PER_USER = 3
 NOTIFY_COOLDOWN_HOURS = 24
+FEEDBACK_EMAIL = os.environ.get("FEEDBACK_EMAIL", "xanretech@gmail.com")
+MAX_FEEDBACK_PER_HOUR = 5
+FEEDBACK_CATEGORIES = {
+    "bug": "Bug report",
+    "accuracy": "Incorrect visa information",
+    "idea": "Feature idea",
+    "other": "General feedback",
+}
 
 # Keep strong references to background lookup tasks: asyncio only holds a weak
 # reference to tasks, so an un-referenced task can be garbage-collected mid-run.
@@ -565,6 +574,101 @@ async def notify_outdated(search_id: str, user: dict = Depends(get_current_user)
         {"id": search_id},
         {"$set": {"last_notified_at": datetime.now(timezone.utc).isoformat()}})
     return {"status": "sent", "email_id": email.get("id") if isinstance(email, dict) else None}
+
+
+# ---------- Feedback ----------
+class FeedbackIn(BaseModel):
+    category: str = Field(default="other")
+    message: str = Field(min_length=5, max_length=4000)
+    email: EmailStr | None = None
+    page: str | None = Field(default=None, max_length=300)
+
+
+@api.post("/feedback")
+async def submit_feedback(body: FeedbackIn, request: Request):
+    if body.category not in FEEDBACK_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Invalid feedback category")
+
+    # Feedback is open to signed-out visitors too, so identify by user when a
+    # valid token is present and fall back to IP for rate limiting.
+    user = None
+    try:
+        user = await get_current_user(request)
+    except HTTPException:
+        pass
+    client_ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                 or (request.client.host if request.client else "unknown"))
+    rate_key = f"user:{user['id']}" if user else f"ip:{client_ip}"
+
+    since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    recent = await db.feedback.count_documents({"rate_key": rate_key, "created_at": {"$gte": since}})
+    if recent >= MAX_FEEDBACK_PER_HOUR:
+        raise HTTPException(status_code=429, detail="Thanks — you've sent several messages already. Please try again later.")
+
+    reply_to = body.email or (user["email"] if user else None)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "category": body.category,
+        "message": body.message,
+        "reply_to": reply_to,
+        "page": body.page,
+        "user_id": user["id"] if user else None,
+        "user_name": user.get("name") if user else None,
+        "rate_key": rate_key,
+        "user_agent": request.headers.get("user-agent", "")[:300],
+        "emailed": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # Persist first: a mail outage must never lose the feedback itself.
+    await db.feedback.insert_one(dict(doc))
+
+    api_key = os.environ.get("RESEND_API_KEY", "").strip()
+    if api_key:
+        import resend
+        resend.api_key = api_key
+        sender = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+        label = FEEDBACK_CATEGORIES[body.category]
+        rows = [
+            ("Category", label),
+            ("From", f"{doc['user_name']} <{reply_to}>" if doc["user_name"] else (reply_to or "anonymous")),
+            ("Account", "signed in" if user else "signed out"),
+            ("Page", body.page or "—"),
+            ("Received", doc["created_at"]),
+        ]
+        rows_html = "".join(
+            f'<tr><td style="padding:4px 12px 4px 0;color:#5A6B62;font-size:13px">{html.escape(k)}</td>'
+            f'<td style="padding:4px 0;font-size:13px">{html.escape(str(v))}</td></tr>'
+            for k, v in rows
+        )
+        email_html = f"""
+        <div style="font-family:Arial,sans-serif;color:#171A1C">
+          <h2 style="color:#1A4331;margin-bottom:4px">VisaScout — new {html.escape(label.lower())}</h2>
+          <table style="border-collapse:collapse;margin-bottom:16px">{rows_html}</table>
+          <div style="border-left:4px solid #1A4331;padding:12px 16px;background:#F9F8F6;white-space:pre-wrap">{html.escape(body.message)}</div>
+        </div>"""
+        params = {
+            "from": sender,
+            "to": [FEEDBACK_EMAIL],
+            "subject": f"[VisaScout] {label}",
+            "html": email_html,
+        }
+        if reply_to:
+            params["reply_to"] = reply_to
+        try:
+            await asyncio.to_thread(resend.Emails.send, params)
+            await db.feedback.update_one({"id": doc["id"]}, {"$set": {"emailed": True}})
+        except Exception as e:
+            # Already stored — surface in logs and still thank the user.
+            logger.error("feedback email failed for %s: %s", doc["id"], e)
+    else:
+        logger.warning("feedback %s stored but not emailed (RESEND_API_KEY unset)", doc["id"])
+
+    return {"ok": True}
+
+
+@api.get("/admin/feedback")
+async def admin_feedback(admin: dict = Depends(get_current_admin)):
+    return await db.feedback.find({}, {"_id": 0, "rate_key": 0}).sort("created_at", -1).to_list(500)
 
 
 @api.get("/")

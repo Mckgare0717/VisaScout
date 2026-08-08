@@ -2,7 +2,8 @@ import React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "./ui/button";
-import { Stamp, LogOut, Settings, LayoutGrid, Plus, Instagram, Globe, Mail } from "lucide-react";
+import FeedbackDialog from "./FeedbackDialog";
+import { Stamp, LogOut, Settings, LayoutGrid, Plus, Instagram, Globe, Mail, MessageSquare } from "lucide-react";
 
 const XANRE = {
   site: "https://xanretechltd.netlify.app/",
@@ -31,6 +32,7 @@ export function DeveloperCredit({ dark = false }) {
           className={`flex items-center gap-1.5 text-[11px] ${base} ${hover} transition-colors`}>
           <Mail className="h-3.5 w-3.5" /> {XANRE.email}
         </a>
+        <FeedbackDialog dark={dark} />
       </div>
     </div>
   );
@@ -67,6 +69,14 @@ export default function Layout({ children }) {
               className="bg-forest hover:bg-forest-dark text-paper rounded-sm gap-1.5">
               <Plus className="h-4 w-4" /> <span className="hidden sm:inline">New Lookup</span>
             </Button>
+            <FeedbackDialog
+              trigger={
+                <Button variant="ghost" size="icon" data-testid="nav-feedback"
+                  title="Send feedback" className="text-muted2 hover:bg-secondary">
+                  <MessageSquare className="h-4 w-4" />
+                </Button>
+              }
+            />
             <Button variant="ghost" size="icon" data-testid="nav-settings"
               onClick={() => navigate("/app/settings")} className="text-muted2 hover:bg-secondary">
               <Settings className="h-4 w-4" />
