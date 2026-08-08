@@ -4,25 +4,41 @@ import logging
 from datetime import datetime, timezone
 
 from anthropic import AsyncAnthropic
+from google import genai
+from google.genai import types as genai_types
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-sonnet-5"
-WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 6}
-# Server-side web search runs in an API-side loop that can pause with
-# stop_reason "pause_turn"; cap how many times we resume it.
+# Which LLM backend runs the live lookups. "gemini" (default) uses Google's
+# free-tier-friendly API for testing; "anthropic" is the production path.
+def _provider() -> str:
+    return os.environ.get("LLM_PROVIDER", "gemini").strip().lower()
+
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
+ANTHROPIC_WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 6}
+# Anthropic's server-side web search runs in an API-side loop that can pause
+# with stop_reason "pause_turn"; cap how many times we resume it.
 MAX_CONTINUATIONS = 5
 
-_client = None
+# Clients are lazy so the module imports cleanly before the env file is loaded,
+# and a missing key fails the lookup (visible in the UI) rather than boot.
+_anthropic_client = None
+_gemini_client = None
 
 
-def _get_client() -> AsyncAnthropic:
-    # Lazy so the module imports cleanly before the env file is loaded,
-    # and a missing key fails the lookup (visible in the UI) rather than boot.
-    global _client
-    if _client is None:
-        _client = AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    return _client
+def _get_anthropic_client() -> AsyncAnthropic:
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    return _anthropic_client
+
+
+def _get_gemini_client() -> genai.Client:
+    global _gemini_client
+    if _gemini_client is None:
+        _gemini_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    return _gemini_client
 
 PURPOSE_LABELS = {
     "tourism": "Tourism / Visit",
@@ -63,7 +79,7 @@ def _today() -> str:
 def build_system_prompt() -> str:
     return f"""You are VisaScout, a meticulous visa-requirements research assistant.
 
-You MUST use the web_search tool to find CURRENT information from OFFICIAL government and embassy sources
+You MUST use your web search tool to find CURRENT information from OFFICIAL government and embassy sources
 (.gov domains, official immigration/foreign-ministry portals, official embassy/consulate sites, and official
 visa application portals such as vfsglobal only when it is the officially designated processor). Visa rules
 change frequently, so NEVER answer from memory. Prefer the destination country's official immigration authority
@@ -103,6 +119,41 @@ def _extract_json(text: str) -> dict:
     return json.loads(t[start:end + 1])
 
 
+async def _lookup_via_anthropic(query: str) -> str:
+    client = _get_anthropic_client()
+    messages = [{"role": "user", "content": query}]
+    response = None
+    for _ in range(MAX_CONTINUATIONS):
+        response = await client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=16000,
+            system=build_system_prompt(),
+            tools=[ANTHROPIC_WEB_SEARCH_TOOL],
+            messages=messages,
+        )
+        if response.stop_reason != "pause_turn":
+            break
+        # The API detects the trailing server-tool block and resumes the search.
+        messages.append({"role": "assistant", "content": response.content})
+
+    return "".join(block.text for block in response.content if block.type == "text")
+
+
+async def _lookup_via_gemini(query: str) -> str:
+    client = _get_gemini_client()
+    response = await client.aio.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=query,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=build_system_prompt(),
+            # Google Search grounding — Gemini's server-side web search.
+            tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())],
+            max_output_tokens=16000,
+        ),
+    )
+    return response.text or ""
+
+
 async def run_visa_lookup(nationality: str, residence: str, destination: str, purpose: str,
                           search_id: str | None = None) -> dict:
     purpose_label = PURPOSE_LABELS.get(purpose, purpose)
@@ -112,28 +163,19 @@ async def run_visa_lookup(nationality: str, residence: str, destination: str, pu
         f"Research the current official visa requirements for this exact pairing and return the JSON object."
     )
 
-    client = _get_client()
-    messages = [{"role": "user", "content": query}]
-    response = None
-    for _ in range(MAX_CONTINUATIONS):
-        response = await client.messages.create(
-            model=MODEL,
-            max_tokens=16000,
-            system=build_system_prompt(),
-            tools=[WEB_SEARCH_TOOL],
-            messages=messages,
-        )
-        if response.stop_reason != "pause_turn":
-            break
-        # The API detects the trailing server-tool block and resumes the search.
-        messages.append({"role": "assistant", "content": response.content})
+    provider = _provider()
+    if provider == "anthropic":
+        content = await _lookup_via_anthropic(query)
+    elif provider == "gemini":
+        content = await _lookup_via_gemini(query)
+    else:
+        raise ValueError(f"Unknown LLM_PROVIDER '{provider}' — expected 'gemini' or 'anthropic'")
 
-    content = "".join(block.text for block in response.content if block.type == "text")
     try:
         data = _extract_json(content)
     except Exception as e:
-        logger.error("Failed to parse visa JSON for %s (stop_reason=%s): %s -- raw: %s",
-                     search_id, response.stop_reason, e, content[:500])
+        logger.error("Failed to parse visa JSON for %s (provider=%s): %s -- raw: %s",
+                     search_id, provider, e, content[:500])
         # Guardrail fallback: never guess
         data = {
             "found_reliable_source": False,

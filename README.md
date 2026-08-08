@@ -10,7 +10,7 @@
 
 | Part | Stack | Path |
 |---|---|---|
-| Backend | FastAPI + MongoDB (Motor), LLM lookups via the Anthropic API (Claude + server-side web search) | `backend/` |
+| Backend | FastAPI + MongoDB (Motor), LLM lookups via Gemini (default, free tier) or the Anthropic API — switchable with `LLM_PROVIDER` | `backend/` |
 | Frontend | React (CRA + CRACO), Tailwind, shadcn/ui | `frontend/` |
 
 ## Backend setup
@@ -28,7 +28,11 @@ uvicorn server:app --reload --port 8001
 | `MONGO_URL` | yes | MongoDB connection string |
 | `DB_NAME` | yes | Database name |
 | `JWT_SECRET` | yes | Secret for signing access tokens |
-| `ANTHROPIC_API_KEY` | yes | Anthropic API key ([console.anthropic.com](https://console.anthropic.com)) — powers the live visa lookups (Claude + web search) |
+| `LLM_PROVIDER` | no | Which model runs the live lookups: `gemini` (default — free tier, good for testing) or `anthropic` (production) |
+| `GEMINI_API_KEY` | with `gemini` | Google AI API key ([aistudio.google.com/apikey](https://aistudio.google.com/apikey)) — Gemini + Google Search grounding |
+| `GEMINI_MODEL` | no | Gemini model for lookups (default `gemini-2.5-flash`) |
+| `ANTHROPIC_API_KEY` | with `anthropic` | Anthropic API key ([console.anthropic.com](https://console.anthropic.com)) — Claude + web search |
+| `ANTHROPIC_MODEL` | no | Claude model for lookups (default `claude-sonnet-5`) |
 | `CORS_ORIGINS` | prod | Comma-separated allowed frontend origins. Unset/`*` = wildcard **without** credentials (cookie auth disabled) |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | no | If **both** are set, an admin account is seeded at startup. No defaults — omitting them means no admin is created |
 | `DEMO_EMAIL` / `DEMO_PASSWORD` | no | Demo account seeded at startup (defaults to the public demo credentials shown on the landing page) |
