@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { Button } from "../components/ui/button";
+import FeedbackDialog from "../components/FeedbackDialog";
 import { Stamp, Search, ShieldCheck, FileText, Link2, Globe2, ArrowRight, Instagram, Globe, Mail } from "lucide-react";
 
 const XANRE = {
@@ -118,6 +119,7 @@ export default function Landing() {
                 className="flex items-center gap-1.5 text-[11px] text-paper/70 hover:text-paper transition-colors">
                 <Mail className="h-3.5 w-3.5" /> {XANRE.email}
               </a>
+              <FeedbackDialog dark />
             </div>
           </div>
         </div>
