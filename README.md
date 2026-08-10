@@ -35,7 +35,7 @@ uvicorn server:app --reload --port 8001
 | `ANTHROPIC_MODEL` | no | Claude model for lookups (default `claude-sonnet-5`) |
 | `CORS_ORIGINS` | prod | Comma-separated allowed frontend origins. Unset/`*` = wildcard **without** credentials (cookie auth disabled) |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | no | If **both** are set, an admin account is seeded at startup. No defaults — omitting them means no admin is created |
-| `DEMO_EMAIL` / `DEMO_PASSWORD` | no | Demo account seeded at startup (defaults to the public demo credentials shown on the landing page) |
+| `DEMO_EMAIL` / `DEMO_PASSWORD` | no | Demo account seeded at startup for internal use. Change these from the defaults on any deploy real users can reach — the account still exists even when the frontend doesn't advertise it (see `REACT_APP_SHOW_DEMO` below) |
 | `RESEND_API_KEY` / `SENDER_EMAIL` | no | Enables outbound email (outdated-search notices + feedback) via Resend. Without it, feedback is still stored in MongoDB, just not emailed |
 | `FEEDBACK_EMAIL` | no | Where the in-app feedback form delivers (default `xanretech@gmail.com`) |
 | `EMERGENT_SESSION_URL` | no | Override for the Emergent Google-auth session exchange endpoint |
@@ -47,6 +47,8 @@ cd frontend
 yarn install
 REACT_APP_BACKEND_URL=http://localhost:8001 yarn start
 ```
+
+`REACT_APP_SHOW_DEMO=true` (optional) shows the "Try the demo account" button and pre-fills the demo login — **off by default**, and CRA bakes this in at build time, so it must be set before `yarn build`/`yarn start`, not just on the running server. Leave it unset on any deploy real users can reach.
 
 `REACT_APP_BACKEND_URL` must point at the backend origin (no trailing slash); the client calls `<REACT_APP_BACKEND_URL>/api/...`.
 

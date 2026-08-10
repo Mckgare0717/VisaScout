@@ -10,6 +10,9 @@ import { toast } from "sonner";
 
 const SIDE = "https://images.unsplash.com/photo-1562504208-03d85cc8c23e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHwyfHx3b3JsZCUyMG1hcCUyMGFic3RyYWN0JTIwbGluZSUyMGFydHxlbnwwfHx8fDE3ODU3MDg4NDN8MA&ixlib=rb-4.1.0&q=85";
 
+// Off by default — see Landing.jsx for the rationale.
+const SHOW_DEMO = process.env.REACT_APP_SHOW_DEMO === "true";
+
 export default function Auth({ mode }) {
   const isLogin = mode === "login";
   const { login, register } = useAuth();
@@ -110,7 +113,7 @@ export default function Auth({ mode }) {
             </Button>
           </form>
 
-          {isLogin && (
+          {isLogin && SHOW_DEMO && (
             <button onClick={fillDemo} data-testid="fill-demo-btn"
               className="mt-4 w-full text-center font-mono text-[11px] text-forest hover:underline">
               Use demo credentials →

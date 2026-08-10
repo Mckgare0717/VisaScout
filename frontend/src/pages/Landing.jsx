@@ -12,6 +12,10 @@ const XANRE = {
 
 const HERO = "https://images.unsplash.com/photo-1687552626877-f4596995931c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwzfHxhaXJwb3J0JTIwdGVybWluYWwlMjBhcmNoaXRlY3R1cmV8ZW58MHx8fHwxNzg1NzA4ODMxfDA&ixlib=rb-4.1.0&q=85";
 
+// Off by default — the demo login is for internal/staging use only and
+// must be opted into per-deploy, never shipped to real users by default.
+const SHOW_DEMO = process.env.REACT_APP_SHOW_DEMO === "true";
+
 const features = [
   { icon: Search, title: "Live official search", body: "Every lookup runs a real-time search of .gov domains and embassy portals — never model memory." },
   { icon: FileText, title: "5-category checklist", body: "Identity, Financial, Purpose-specific, Health/Biometric and Other — as collapsible, checkable cards." },
@@ -57,13 +61,17 @@ export default function Landing() {
                 Start a visa lookup <ArrowRight className="h-4 w-4" />
               </Button>
             </Link>
-            <Link to="/login">
-              <Button size="lg" variant="outline" data-testid="hero-demo-btn" className="rounded-sm border-forest/40 text-forest hover:bg-successbg h-12 px-7">
-                Try the demo account
-              </Button>
-            </Link>
+            {SHOW_DEMO && (
+              <Link to="/login">
+                <Button size="lg" variant="outline" data-testid="hero-demo-btn" className="rounded-sm border-forest/40 text-forest hover:bg-successbg h-12 px-7">
+                  Try the demo account
+                </Button>
+              </Link>
+            )}
           </div>
-          <p className="mt-4 font-mono text-[11px] text-muted2">demo@visascout.app · Demo1234!</p>
+          {SHOW_DEMO && (
+            <p className="mt-4 font-mono text-[11px] text-muted2">demo@visascout.app · Demo1234!</p>
+          )}
         </div>
 
         <div className="relative animate-fade-up" style={{ animationDelay: "0.12s" }}>
