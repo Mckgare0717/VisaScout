@@ -25,6 +25,7 @@ from auth import (
     make_get_current_user, make_get_current_admin, seed_demo_user,
 )
 from visa_service import run_visa_lookup, PURPOSE_LABELS
+from billing import make_billing_router, public_billing, is_pro, FREE_LOOKUP_LIMIT
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -40,8 +41,11 @@ async def lifespan(_app: FastAPI):
     await db.searches.create_index("user_id")
     await db.user_sessions.create_index("session_token", unique=True)
     await db.feedback.create_index([("rate_key", 1), ("created_at", -1)])
+    await db.users.create_index("stripe_customer_id", sparse=True)
+    await db.rate_events.create_index([("bucket", 1), ("key", 1), ("at", -1)])
     # TTL cleanup for expired sessions (applies to docs where expires_at is a BSON date).
     await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
+    await db.rate_events.create_index("at", expireAfterSeconds=3600)
     # Background lookup tasks do not survive a restart: anything still marked
     # "processing" at boot is dead and would otherwise spin in the UI forever.
     stale = await db.searches.update_many(
@@ -119,7 +123,38 @@ def public_user(u: dict) -> dict:
         "role": u.get("role", "user"),
         "provider": u.get("provider", "email"),
         "picture": u.get("picture"),
+        **public_billing(u),
     }
+
+
+def _client_ip(request: Request) -> str:
+    return (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or (request.client.host if request.client else "unknown"))
+
+
+async def _rate_limit(bucket: str, key: str, limit: int, window_seconds: int):
+    # ponytail: count-then-insert, not atomic — a burst can slip 1-2 past the
+    # cap. Fine for auth abuse / cost control; swap for a fixed-window counter
+    # doc with $inc if precision ever matters.
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(seconds=window_seconds)
+    recent = await db.rate_events.count_documents(
+        {"bucket": bucket, "key": key, "at": {"$gte": since}})
+    if recent >= limit:
+        raise HTTPException(status_code=429,
+                            detail="Too many attempts. Please wait a few minutes and try again.")
+    await db.rate_events.insert_one({"bucket": bucket, "key": key, "at": now})
+
+
+def _check_lookup_quota(user: dict):
+    if is_pro(user):
+        return
+    if int(user.get("lookups_used", 0)) >= FREE_LOOKUP_LIMIT:
+        raise HTTPException(
+            status_code=402,
+            detail=(f"You've used your {FREE_LOOKUP_LIMIT} free live lookups. "
+                    "Upgrade to Pro for unlimited lookups, re-checks and PDF exports."),
+        )
 
 
 def _days_old(iso: str) -> int:
@@ -140,7 +175,8 @@ def _freshness_date(d: dict) -> str:
 
 # ---------- Auth ----------
 @api.post("/auth/register")
-async def register(body: RegisterIn):
+async def register(body: RegisterIn, request: Request):
+    await _rate_limit("register", _client_ip(request), limit=5, window_seconds=3600)
     email = body.email.lower()
     user = {
         "id": str(uuid.uuid4()),
@@ -152,6 +188,8 @@ async def register(body: RegisterIn):
         "picture": None,
         "notify_outdated": True,
         "seen_disclaimer": False,
+        "plan": "free",
+        "lookups_used": 0,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
@@ -198,6 +236,8 @@ async def google_auth(body: GoogleSessionIn, response: Response):
             "picture": data.get("picture"),
             "notify_outdated": True,
             "seen_disclaimer": True,
+            "plan": "free",
+            "lookups_used": 0,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await db.users.insert_one(dict(user))
@@ -224,8 +264,9 @@ async def google_auth(body: GoogleSessionIn, response: Response):
 
 
 @api.post("/auth/login")
-async def login(body: LoginIn):
+async def login(body: LoginIn, request: Request):
     email = body.email.lower()
+    await _rate_limit("login", f"{_client_ip(request)}:{email}", limit=8, window_seconds=900)
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user.get("password_hash")):
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -337,6 +378,7 @@ async def _ensure_lookup_capacity(user_id: str):
 async def visa_lookup(body: LookupIn, user: dict = Depends(get_current_user)):
     if body.purpose not in PURPOSE_LABELS:
         raise HTTPException(status_code=400, detail="Invalid purpose of travel")
+    _check_lookup_quota(user)
     await _ensure_lookup_capacity(user["id"])
 
     now = datetime.now(timezone.utc).isoformat()
@@ -355,6 +397,8 @@ async def visa_lookup(body: LookupIn, user: dict = Depends(get_current_user)):
         "checked_at": now,
     }
     await db.searches.insert_one(dict(doc))
+    if not is_pro(user):
+        await db.users.update_one({"id": user["id"]}, {"$inc": {"lookups_used": 1}})
     _spawn_lookup(doc["id"], body.nationality, body.residence, body.destination, body.purpose)
     doc.pop("_id", None)
     doc["days_old"] = 0
@@ -390,6 +434,10 @@ async def rerun_search(search_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Search not found")
     if old.get("status") == "processing":
         raise HTTPException(status_code=409, detail="This search is already being re-checked.")
+    if not is_pro(user):
+        raise HTTPException(
+            status_code=402,
+            detail="Re-checking a search against live sources is a Pro feature.")
     await _ensure_lookup_capacity(user["id"])
     await db.searches.update_one({"id": search_id}, {"$set": {"status": "processing", "error": None}})
     _spawn_lookup(search_id, old["nationality"], old["residence"], old["destination"], old["purpose"])
@@ -410,6 +458,8 @@ async def delete_search(search_id: str, user: dict = Depends(get_current_user)):
 # ---------- PDF export ----------
 @api.get("/visa/searches/{search_id}/pdf")
 async def export_pdf(search_id: str, user: dict = Depends(get_current_user)):
+    if not is_pro(user):
+        raise HTTPException(status_code=402, detail="PDF checklist export is a Pro feature.")
     d = await db.searches.find_one({"id": search_id, "user_id": user["id"]}, {"_id": 0})
     if not d:
         raise HTTPException(status_code=404, detail="Search not found")
@@ -521,6 +571,8 @@ def _build_pdf(d: dict) -> bytes:
 # ---------- Email notification (Resend) ----------
 @api.post("/visa/searches/{search_id}/notify")
 async def notify_outdated(search_id: str, user: dict = Depends(get_current_user)):
+    if not is_pro(user):
+        raise HTTPException(status_code=402, detail="Outdated-search email alerts are a Pro feature.")
     d = await db.searches.find_one({"id": search_id, "user_id": user["id"]}, {"_id": 0})
     if not d:
         raise HTTPException(status_code=404, detail="Search not found")
@@ -539,7 +591,7 @@ async def notify_outdated(search_id: str, user: dict = Depends(get_current_user)
             pass
     api_key = os.environ.get("RESEND_API_KEY", "").strip()
     if not api_key:
-        raise HTTPException(status_code=400, detail="Email notifications are not configured yet (missing RESEND_API_KEY).")
+        raise HTTPException(status_code=503, detail="Email notifications are not configured yet (missing RESEND_API_KEY).")
 
     import resend
     resend.api_key = api_key
@@ -676,6 +728,7 @@ async def root():
     return {"service": "VisaScout API", "status": "ok"}
 
 
+api.include_router(make_billing_router(db, get_current_user))
 app.include_router(api)
 
 # Browsers reject "Access-Control-Allow-Origin: *" on credentialed requests, so a
