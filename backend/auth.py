@@ -14,6 +14,11 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
 
 
+# A real bcrypt hash to verify against when the account doesn't exist, so login
+# takes the same time whether or not the email is registered (no user enumeration).
+DUMMY_PASSWORD_HASH = hash_password("visascout-timing-equalizer")
+
+
 def verify_password(plain: str, hashed) -> bool:
     if not hashed:
         # Social-login accounts have no password; never let them match.
@@ -97,7 +102,12 @@ def make_get_current_admin(db):
 
 
 async def seed_demo_user(db):
-    # Demo standard user
+    # Demo standard user — only seeded when explicitly enabled. Its password is
+    # public (in this source), so an always-on demo account is a login backdoor
+    # on every deployment. Set SEED_DEMO_USER=true only in test/preview envs.
+    if os.environ.get("SEED_DEMO_USER", "").strip().lower() not in ("1", "true", "yes"):
+        await _seed_admin_user(db)
+        return
     email = os.environ.get("DEMO_EMAIL", "demo@visascout.app")
     password = os.environ.get("DEMO_PASSWORD", "Demo1234!")
     existing = await db.users.find_one({"email": email})
@@ -126,6 +136,10 @@ async def seed_demo_user(db):
             updates["role"] = "user"
         await db.users.update_one({"email": email}, {"$set": updates})
 
+    await _seed_admin_user(db)
+
+
+async def _seed_admin_user(db):
     # Admin user — only seeded when credentials are explicitly configured.
     # No hard-coded fallback: a well-known default password would be an open
     # admin backdoor on any deployment that forgot to set the env vars.

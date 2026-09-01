@@ -133,11 +133,14 @@ def make_billing_router(db, get_current_user) -> APIRouter:
         if etype == "checkout.session.completed":
             user_id = obj.get("client_reference_id")
             customer_id = obj.get("customer")
+            # A session can complete with payment still pending (async payment
+            # methods) — only grant Pro once Stripe confirms it is actually paid.
+            paid = obj.get("payment_status") in ("paid", "no_payment_required")
             if user_id and customer_id:
-                await db.users.update_one(
-                    {"id": user_id},
-                    {"$set": {"stripe_customer_id": customer_id, "plan": "pro"}},
-                )
+                fields = {"stripe_customer_id": customer_id}
+                if paid:
+                    fields["plan"] = "pro"
+                await db.users.update_one({"id": user_id}, {"$set": fields})
         elif etype in ("customer.subscription.updated", "customer.subscription.created",
                        "customer.subscription.deleted"):
             status = "canceled" if etype.endswith("deleted") else obj.get("status", "")
