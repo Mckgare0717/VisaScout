@@ -23,6 +23,7 @@ load_dotenv(ROOT_DIR / ".env")
 from auth import (
     hash_password, verify_password, create_access_token,
     make_get_current_user, make_get_current_admin, seed_demo_user,
+    DUMMY_PASSWORD_HASH,
 )
 from visa_service import run_visa_lookup, PURPOSE_LABELS
 from billing import make_billing_router, public_billing, is_pro, FREE_LOOKUP_LIMIT
@@ -98,9 +99,9 @@ def _spawn_lookup(search_id: str, nationality: str, residence: str, destination:
 
 # ---------- Models ----------
 class RegisterIn(BaseModel):
-    name: str = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=120)
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8, max_length=256)
 
 
 class LoginIn(BaseModel):
@@ -109,10 +110,12 @@ class LoginIn(BaseModel):
 
 
 class LookupIn(BaseModel):
-    nationality: str = Field(min_length=2)
-    residence: str = Field(min_length=2)
-    destination: str = Field(min_length=2)
-    purpose: str
+    # Capped: these strings are interpolated into the LLM prompt, so unbounded
+    # input is both a cost and a prompt-injection surface.
+    nationality: str = Field(min_length=2, max_length=60)
+    residence: str = Field(min_length=2, max_length=60)
+    destination: str = Field(min_length=2, max_length=60)
+    purpose: str = Field(max_length=40)
 
 
 def public_user(u: dict) -> dict:
@@ -127,9 +130,23 @@ def public_user(u: dict) -> dict:
     }
 
 
+def _pick_client_ip(xff_header: str, peer: str | None, hops: int) -> str:
+    # Use the Nth-from-last X-Forwarded-For hop: the platform proxy (Render/Vercel)
+    # appends the address it actually saw, so earlier entries are client-spoofable
+    # and must not be trusted for rate-limit keys.
+    # ponytail: assumes TRUSTED_PROXY_HOPS trusted proxies (default 1).
+    xff = [p.strip() for p in (xff_header or "").split(",") if p.strip()]
+    if xff:
+        return xff[-min(max(1, hops), len(xff))]
+    return peer or "unknown"
+
+
 def _client_ip(request: Request) -> str:
-    return (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-            or (request.client.host if request.client else "unknown"))
+    return _pick_client_ip(
+        request.headers.get("x-forwarded-for", ""),
+        request.client.host if request.client else None,
+        int(os.environ.get("TRUSTED_PROXY_HOPS", "1")),
+    )
 
 
 async def _rate_limit(bucket: str, key: str, limit: int, window_seconds: int):
@@ -268,7 +285,12 @@ async def login(body: LoginIn, request: Request):
     email = body.email.lower()
     await _rate_limit("login", f"{_client_ip(request)}:{email}", limit=8, window_seconds=900)
     user = await db.users.find_one({"email": email})
-    if not user or not verify_password(body.password, user.get("password_hash")):
+    if not user:
+        # Spend the same bcrypt time as a real check so a missing account can't
+        # be told apart from a wrong password by response latency.
+        verify_password(body.password, DUMMY_PASSWORD_HASH)
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not verify_password(body.password, user.get("password_hash")):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token(user["id"], email)
     return {"token": token, "user": public_user(user)}
@@ -358,10 +380,12 @@ async def _process_lookup(search_id: str, nationality: str, residence: str, dest
             {"id": search_id},
             {"$set": {"status": "error",
                       "error": "The live source search took too long to complete."}})
-    except Exception as e:
+    except Exception:
         logger.exception("background visa lookup failed")
         await db.searches.update_one(
-            {"id": search_id}, {"$set": {"status": "error", "error": str(e)}})
+            {"id": search_id},
+            {"$set": {"status": "error",
+                      "error": "The live source search failed. Please try again in a few minutes."}})
 
 
 async def _ensure_lookup_capacity(user_id: str):
@@ -621,7 +645,7 @@ async def notify_outdated(search_id: str, user: dict = Depends(get_current_user)
         email = await asyncio.to_thread(resend.Emails.send, params)
     except Exception as e:
         logger.error("resend failed: %s", e)
-        raise HTTPException(status_code=400, detail=f"Failed to send email: {str(e)}")
+        raise HTTPException(status_code=502, detail="Could not send the email right now. Please try again later.")
     await db.searches.update_one(
         {"id": search_id},
         {"$set": {"last_notified_at": datetime.now(timezone.utc).isoformat()}})
@@ -648,9 +672,7 @@ async def submit_feedback(body: FeedbackIn, request: Request):
         user = await get_current_user(request)
     except HTTPException:
         pass
-    client_ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-                 or (request.client.host if request.client else "unknown"))
-    rate_key = f"user:{user['id']}" if user else f"ip:{client_ip}"
+    rate_key = f"user:{user['id']}" if user else f"ip:{_client_ip(request)}"
 
     since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     recent = await db.feedback.count_documents({"rate_key": rate_key, "created_at": {"$gte": since}})
