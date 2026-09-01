@@ -26,7 +26,10 @@ from auth import (
     DUMMY_PASSWORD_HASH,
 )
 from visa_service import run_visa_lookup, PURPOSE_LABELS
-from billing import make_billing_router, public_billing, is_pro, FREE_LOOKUP_LIMIT
+from billing import (
+    make_billing_router, public_billing, is_pro, FREE_LOOKUP_LIMIT,
+    stripe_subscription_status,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -338,6 +341,9 @@ async def admin_users(admin: dict = Depends(get_current_admin)):
         u.setdefault("provider", "email")
         u.setdefault("picture", None)
         u.setdefault("notify_outdated", True)
+        u.setdefault("plan", "free")
+        u.setdefault("lookups_used", 0)
+        u.setdefault("comp", False)
     return users
 
 
@@ -347,13 +353,126 @@ async def admin_stats(admin: dict = Depends(get_current_admin)):
     total_searches = await db.searches.count_documents({})
     google_users = await db.users.count_documents({"provider": "google"})
     admins = await db.users.count_documents({"role": "admin"})
+    pro_users = await db.users.count_documents({"plan": "pro"})
     return {
         "total_users": total_users,
         "total_searches": total_searches,
         "google_users": google_users,
         "email_users": total_users - google_users,
         "admins": admins,
+        "pro_users": pro_users,
     }
+
+
+class AdminUserCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=256)
+    plan: str = "free"
+    role: str = "user"
+
+
+class AdminUserPatch(BaseModel):
+    plan: str | None = None
+    role: str | None = None
+    lookups_used: int | None = None
+
+
+_PLANS = {"free", "pro"}
+_ROLES = {"user", "admin"}
+_ACTIVE_SUB_STATUSES = {"active", "trialing", "past_due"}
+
+
+@api.post("/admin/users")
+async def admin_create_user(body: AdminUserCreate, admin: dict = Depends(get_current_admin)):
+    if body.plan not in _PLANS or body.role not in _ROLES:
+        raise HTTPException(status_code=400, detail="Invalid plan or role")
+    email = body.email.lower()
+    user = {
+        "id": str(uuid.uuid4()),
+        "email": email,
+        "name": body.name,
+        "password_hash": hash_password(body.password),
+        "role": body.role,
+        "provider": "email",
+        "picture": None,
+        "notify_outdated": True,
+        "seen_disclaimer": True,
+        "plan": body.plan,
+        "lookups_used": 0,
+        # A Pro plan with no Stripe customer is a comp — flagged so it isn't
+        # mistaken for a paid sub and never gets downgraded by a webhook.
+        "comp": body.plan == "pro",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        await db.users.insert_one(dict(user))
+    except DuplicateKeyError:
+        raise HTTPException(status_code=400, detail="An account with this email already exists")
+    return {**public_user(user), "comp": user.get("comp", False)}
+
+
+@api.patch("/admin/users/{user_id}")
+async def admin_patch_user(user_id: str, body: AdminUserPatch, admin: dict = Depends(get_current_admin)):
+    u = await db.users.find_one({"id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    updates: dict = {}
+    if body.plan is not None:
+        if body.plan not in _PLANS:
+            raise HTTPException(status_code=400, detail="Invalid plan")
+        updates["plan"] = body.plan
+        updates["comp"] = body.plan == "pro" and not u.get("stripe_customer_id")
+    if body.role is not None:
+        if body.role not in _ROLES:
+            raise HTTPException(status_code=400, detail="Invalid role")
+        if body.role != "admin" and u.get("role") == "admin":
+            if await db.users.count_documents({"role": "admin"}) <= 1:
+                raise HTTPException(status_code=400, detail="Can't remove the last admin")
+        updates["role"] = body.role
+    if body.lookups_used is not None:
+        updates["lookups_used"] = max(0, int(body.lookups_used))
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    await db.users.update_one({"id": user_id}, {"$set": updates})
+    u.update(updates)
+    return {**public_user(u), "comp": u.get("comp", False)}
+
+
+@api.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, admin: dict = Depends(get_current_admin)):
+    u = await db.users.find_one({"id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    if u["id"] == admin["id"]:
+        raise HTTPException(status_code=400, detail="Delete your own account from Settings, not here.")
+    if u.get("role") == "admin" and await db.users.count_documents({"role": "admin"}) <= 1:
+        raise HTTPException(status_code=400, detail="Can't delete the last admin")
+    await db.searches.delete_many({"user_id": user_id})
+    await db.user_sessions.delete_many({"user_id": user_id})
+    await db.users.delete_one({"id": user_id})
+    return {"ok": True}
+
+
+@api.post("/admin/users/{user_id}/sync-billing")
+async def admin_sync_billing(user_id: str, admin: dict = Depends(get_current_admin)):
+    u = await db.users.find_one({"id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    customer_id = u.get("stripe_customer_id")
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="No Stripe customer is linked to this user.")
+    try:
+        status = await asyncio.to_thread(stripe_subscription_status, customer_id)
+    except Exception as e:
+        logger.error("admin sync-billing failed for %s: %s", user_id, e)
+        raise HTTPException(status_code=502, detail="Could not read subscriptions from Stripe.")
+    plan = "pro" if status in _ACTIVE_SUB_STATUSES else "free"
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"plan": plan, "stripe_subscription_status": status or "none", "comp": False}})
+    u.update({"plan": plan, "stripe_subscription_status": status or "none"})
+    return {"plan": plan, "stripe_subscription_status": status or "none", "user": public_user(u)}
 
 
 # ---------- Visa ----------
