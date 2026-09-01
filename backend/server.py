@@ -100,7 +100,7 @@ def _spawn_lookup(search_id: str, nationality: str, residence: str, destination:
 class RegisterIn(BaseModel):
     name: str = Field(min_length=1)
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8)
 
 
 class LoginIn(BaseModel):
