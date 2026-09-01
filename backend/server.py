@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, PlainTextResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -748,6 +748,13 @@ async def admin_feedback(admin: dict = Depends(get_current_admin)):
 @api.get("/")
 async def root():
     return {"service": "VisaScout API", "status": "ok"}
+
+
+@app.get("/.well-known/strix-verify.txt", response_class=PlainTextResponse)
+async def strix_verify():
+    # Ownership proof for the app.strix.ai pentest of this API. Overridable via
+    # env if Strix ever re-issues the token.
+    return os.environ.get("STRIX_VERIFY_TOKEN", "strix-verify-d7c96aa48924f463343858019b34a66a")
 
 
 api.include_router(make_billing_router(db, get_current_user))
