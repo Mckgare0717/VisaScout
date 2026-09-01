@@ -127,7 +127,10 @@ def make_billing_router(db, get_current_user) -> APIRouter:
         except (ValueError, stripe_sdk.SignatureVerificationError):
             raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
-        obj = event["data"]["object"]
+        # stripe-python returns typed StripeObjects here, not plain dicts, and
+        # `.get()` raises on them — flatten to a dict for the scalar fields we read.
+        raw = event["data"]["object"]
+        obj = raw.to_dict() if hasattr(raw, "to_dict") else raw
         etype = event["type"]
 
         if etype == "checkout.session.completed":
