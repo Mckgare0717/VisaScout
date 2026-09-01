@@ -101,7 +101,12 @@ export default function Layout({ children }) {
               Informational only — not legal advice. Always verify with official government sources before applying.
             </p>
           </div>
-          <div className="border-t border-line pt-4">
+          <div className="border-t border-line pt-4 flex flex-col gap-3">
+            <div className="flex flex-wrap gap-x-5 gap-y-1">
+              <Link to="/terms" className="font-mono text-[11px] text-muted2 hover:text-forest">Terms</Link>
+              <Link to="/privacy" className="font-mono text-[11px] text-muted2 hover:text-forest">Privacy</Link>
+              <Link to="/refund" className="font-mono text-[11px] text-muted2 hover:text-forest">Refunds</Link>
+            </div>
             <DeveloperCredit />
           </div>
         </div>

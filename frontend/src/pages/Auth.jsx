@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { track } from "@vercel/analytics";
 import { formatApiErrorDetail } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -34,7 +35,10 @@ export default function Auth({ mode }) {
     setLoading(true);
     try {
       if (isLogin) await login(email.trim().toLowerCase(), password);
-      else await register(name.trim(), email.trim().toLowerCase(), password);
+      else {
+        await register(name.trim(), email.trim().toLowerCase(), password);
+        track("signup");
+      }
       toast.success(isLogin ? "Welcome back" : "Account created");
       navigate("/app");
     } catch (err) {
@@ -100,7 +104,7 @@ export default function Auth({ mode }) {
             <div className="space-y-1.5">
               <Label htmlFor="password">Password</Label>
               <Input id="password" type="password" data-testid="auth-password" value={password} onChange={(e) => setPassword(e.target.value)}
-                required minLength={6} className="rounded-sm border-line bg-white" placeholder="••••••••" />
+                required minLength={isLogin ? undefined : 8} className="rounded-sm border-line bg-white" placeholder="••••••••" />
             </div>
 
             {error && (

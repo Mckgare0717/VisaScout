@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import Layout from "../components/Layout";
 import VisaResult from "../components/VisaResult";
 import api, { formatApiErrorDetail } from "../lib/api";
+import { track } from "@vercel/analytics";
 import { Button } from "../components/ui/button";
 import { ArrowLeft, RefreshCw, FileDown, Mail, Loader2, Clock, AlertTriangle, Search, XCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -97,9 +98,15 @@ export default function ResultView() {
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
+      track("pdf_export");
       toast.success("Checklist PDF downloaded");
-    } catch {
-      toast.error("Could not generate PDF");
+    } catch (e) {
+      if (e.response?.status === 402) {
+        track("paywall_hit", { source: "pdf" });
+        toast.error("PDF checklist export is a Pro feature — upgrade in Settings.");
+      } else {
+        toast.error("Could not generate PDF");
+      }
     } finally {
       setPdfLoading(false);
     }

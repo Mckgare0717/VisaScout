@@ -1,14 +1,33 @@
 import React, { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import Layout from "../components/Layout";
 import api from "../lib/api";
+import { useAuth } from "../context/AuthContext";
+import { UpgradeButton } from "../components/Upgrade";
+import { track } from "@vercel/analytics";
 import { Button } from "../components/ui/button";
-import { Search, Plus, Clock, ArrowRight, Trash2, AlertTriangle, Loader2, Plane } from "lucide-react";
+import { Search, Plus, Clock, ArrowRight, Trash2, AlertTriangle, Loader2, Plane, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { user, refresh } = useAuth();
+  const [params, setParams] = useSearchParams();
   const [searches, setSearches] = useState(null);
+
+  useEffect(() => {
+    if (params.get("upgraded") === "1") {
+      track("upgrade_completed");
+      toast.success("Welcome to VisaScout Pro — unlimited lookups unlocked.");
+      refresh?.();
+      params.delete("upgraded");
+      setParams(params, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const isPro = user?.plan === "pro";
+  const remaining = user?.lookups_remaining;
 
   const load = async () => {
     try {
@@ -54,6 +73,19 @@ export default function Dashboard() {
             </Button>
           </Link>
         </div>
+
+        {!isPro && typeof remaining === "number" && (
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border border-forest/25 bg-successbg px-4 py-3 rounded-sm"
+            data-testid="quota-banner">
+            <p className="text-sm text-ink/85 flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-forest" />
+              {remaining > 0
+                ? <>You have <b>{remaining}</b> free {remaining === 1 ? "lookup" : "lookups"} left.</>
+                : <>You've used all your free lookups. Upgrade to keep researching.</>}
+            </p>
+            <UpgradeButton source="dashboard_banner" />
+          </div>
+        )}
 
         {searches === null && (
           <div className="mt-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-forest" /></div>

@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /$
+Allow: /terms
+Allow: /privacy
+Allow: /refund
+Disallow: /app
+Disallow: /login
+Disallow: /register
+
+Sitemap: https://www.visascout.co.uk/sitemap.xml

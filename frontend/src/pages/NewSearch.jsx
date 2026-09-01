@@ -7,6 +7,8 @@ import { Label } from "../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Checkbox } from "../components/ui/checkbox";
 import CountryAutocomplete from "../components/CountryAutocomplete";
+import { PaywallCard } from "../components/Upgrade";
+import { track } from "@vercel/analytics";
 import { Search, Loader2, Plane, MapPin, Home, Flag } from "lucide-react";
 import { toast } from "sonner";
 
@@ -17,6 +19,7 @@ export default function NewSearch() {
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [paywalled, setPaywalled] = useState(false);
 
   useEffect(() => {
     api.get("/purposes").then(({ data }) => setPurposes(data)).catch(() => {});
@@ -34,10 +37,16 @@ export default function NewSearch() {
     setLoading(true);
     try {
       const { data } = await api.post("/visa/lookup", form);
+      track("lookup_started", { purpose: form.purpose });
       navigate(`/app/search/${data.id}`);
     } catch (err) {
-      setError(formatApiErrorDetail(err.response?.data?.detail) || err.message);
-      toast.error("Could not start search");
+      if (err.response?.status === 402) {
+        track("paywall_hit", { source: "new_search" });
+        setPaywalled(true);
+      } else {
+        setError(formatApiErrorDetail(err.response?.data?.detail) || err.message);
+        toast.error("Could not start search");
+      }
       setLoading(false);
     }
   };
@@ -51,7 +60,13 @@ export default function NewSearch() {
           We run a live search of official government and embassy sources for this exact combination.
         </p>
 
-        <form onSubmit={submit} className="mt-8 bg-white paper-card" data-testid="lookup-form">
+        {paywalled && (
+          <div className="mt-8">
+            <PaywallCard source="new_search" />
+          </div>
+        )}
+
+        <form onSubmit={submit} hidden={paywalled} className="mt-8 bg-white paper-card" data-testid="lookup-form">
           <div className="grid sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-line border-b border-line">
             <Field icon={Flag} label="Nationality / Passport" testid="field-nationality">
               <CountryAutocomplete value={form.nationality} onChange={setVal("nationality")}
