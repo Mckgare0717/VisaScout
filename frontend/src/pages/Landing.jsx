@@ -1,5 +1,6 @@
 import React from "react";
 import { Link } from "react-router-dom";
+import { track } from "@vercel/analytics";
 import { Button } from "../components/ui/button";
 import FeedbackDialog from "../components/FeedbackDialog";
 import { Stamp, Search, ShieldCheck, FileText, Link2, Globe2, ArrowRight, Instagram, Globe, Mail } from "lucide-react";
@@ -56,7 +57,7 @@ export default function Landing() {
             risks — with every source cited and dated.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
-            <Link to="/register">
+            <Link to="/register" onClick={() => track("signup_cta_click", { source: "hero" })}>
               <Button size="lg" data-testid="hero-cta-btn" className="bg-forest hover:bg-forest-dark text-paper rounded-sm gap-2 h-12 px-7">
                 Start a visa lookup <ArrowRight className="h-4 w-4" />
               </Button>
@@ -130,6 +131,11 @@ export default function Landing() {
               <FeedbackDialog dark />
             </div>
           </div>
+        </div>
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 pb-8 flex flex-wrap gap-x-6 gap-y-2 border-t border-paper/15 pt-6">
+          <Link to="/terms" className="font-mono text-[11px] text-paper/60 hover:text-paper">Terms</Link>
+          <Link to="/privacy" className="font-mono text-[11px] text-paper/60 hover:text-paper">Privacy</Link>
+          <Link to="/refund" className="font-mono text-[11px] text-paper/60 hover:text-paper">Refunds</Link>
         </div>
       </footer>
     </div>

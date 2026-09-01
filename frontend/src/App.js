@@ -1,9 +1,11 @@
 import "./App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { Analytics } from "@vercel/analytics/react";
 import { Toaster } from "sonner";
 import { AuthProvider } from "./context/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Landing from "./pages/Landing";
+import Legal from "./pages/Legal";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import NewSearch from "./pages/NewSearch";
@@ -17,6 +19,9 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Landing />} />
+            <Route path="/terms" element={<Legal type="terms" />} />
+            <Route path="/privacy" element={<Legal type="privacy" />} />
+            <Route path="/refund" element={<Legal type="refund" />} />
             <Route path="/login" element={<Auth mode="login" />} />
             <Route path="/register" element={<Auth mode="register" />} />
             <Route path="/app" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
@@ -26,6 +31,7 @@ function App() {
           </Routes>
         </BrowserRouter>
         <Toaster position="top-right" richColors />
+        <Analytics />
       </AuthProvider>
     </div>
   );
