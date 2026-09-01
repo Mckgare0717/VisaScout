@@ -14,15 +14,37 @@ export default function Dashboard() {
   const { user, refresh } = useAuth();
   const [params, setParams] = useSearchParams();
   const [searches, setSearches] = useState(null);
+  // Stripe redirects here right after payment, but the webhook that flips the
+  // account to Pro can land a second or two later — poll /auth/me until it does.
+  const [activating, setActivating] = useState(params.get("upgraded") === "1");
 
   useEffect(() => {
-    if (params.get("upgraded") === "1") {
-      track("upgrade_completed");
-      toast.success("Welcome to VisaScout Pro — unlimited lookups unlocked.");
-      refresh?.();
+    if (params.get("upgraded") !== "1") return;
+    track("upgrade_completed");
+    let cancelled = false;
+    let tries = 0;
+    const clearParam = () => {
       params.delete("upgraded");
       setParams(params, { replace: true });
-    }
+    };
+    const poll = async () => {
+      const me = await refresh?.();
+      if (cancelled) return;
+      tries += 1;
+      if (me && me.plan === "pro") {
+        setActivating(false);
+        toast.success("Welcome to VisaScout Pro — unlimited lookups unlocked.");
+        clearParam();
+      } else if (tries >= 15) {
+        setActivating(false);
+        toast.message("Payment received — Pro features will activate shortly. Refresh in a minute if they haven't.");
+        clearParam();
+      } else {
+        setTimeout(poll, 2000);
+      }
+    };
+    poll();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -74,7 +96,15 @@ export default function Dashboard() {
           </Link>
         </div>
 
-        {!isPro && typeof remaining === "number" && (
+        {activating && (
+          <div className="mt-6 flex items-center gap-3 border border-forest/25 bg-successbg px-4 py-3 rounded-sm"
+            data-testid="activating-banner">
+            <Loader2 className="h-4 w-4 text-forest animate-spin shrink-0" />
+            <p className="text-sm text-ink/85">Activating your Pro subscription…</p>
+          </div>
+        )}
+
+        {!activating && !isPro && typeof remaining === "number" && (
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border border-forest/25 bg-successbg px-4 py-3 rounded-sm"
             data-testid="quota-banner">
             <p className="text-sm text-ink/85 flex items-center gap-2">

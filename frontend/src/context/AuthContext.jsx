@@ -11,15 +11,17 @@ export function AuthProvider({ children }) {
     const t = localStorage.getItem("vs_token");
     if (!t) {
       setUser(false);
-      return;
+      return false;
     }
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
+      return data;
     } catch {
       localStorage.removeItem("vs_token");
       setToken(null);
       setUser(false);
+      return false;
     }
   }, []);
 
