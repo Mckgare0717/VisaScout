@@ -54,6 +54,23 @@ def is_pro(user: dict) -> bool:
     return user.get("plan") == "pro" or user.get("role") == "admin"
 
 
+def stripe_subscription_status(customer_id: str) -> str | None:
+    """Latest subscription status for a Stripe customer, or None if none exist /
+    billing isn't configured. Used by the admin 'sync billing' action."""
+    if not billing_configured():
+        return None
+    client = _stripe()
+    subs = client.v1.subscriptions.list(
+        params={"customer": customer_id, "status": "all", "limit": 5})
+    data = [s.to_dict() if hasattr(s, "to_dict") else s for s in subs.data]
+    if not data:
+        return None
+    for s in data:
+        if s.get("status") in _ACTIVE_STATUSES:
+            return s["status"]
+    return data[0].get("status")
+
+
 def make_billing_router(db, get_current_user) -> APIRouter:
     router = APIRouter(prefix="/billing")
 

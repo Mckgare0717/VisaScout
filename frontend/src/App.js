@@ -11,6 +11,7 @@ import Dashboard from "./pages/Dashboard";
 import NewSearch from "./pages/NewSearch";
 import ResultView from "./pages/ResultView";
 import Settings from "./pages/Settings";
+import Admin from "./pages/Admin";
 
 function App() {
   return (
@@ -28,6 +29,7 @@ function App() {
             <Route path="/app/new" element={<ProtectedRoute><NewSearch /></ProtectedRoute>} />
             <Route path="/app/search/:id" element={<ProtectedRoute><ResultView /></ProtectedRoute>} />
             <Route path="/app/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+            <Route path="/app/admin" element={<ProtectedRoute adminOnly><Admin /></ProtectedRoute>} />
           </Routes>
         </BrowserRouter>
         <Toaster position="top-right" richColors />

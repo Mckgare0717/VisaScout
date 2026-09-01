@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "./ui/button";
 import FeedbackDialog from "./FeedbackDialog";
-import { Stamp, LogOut, Settings, LayoutGrid, Plus, Instagram, Globe, Mail, MessageSquare } from "lucide-react";
+import { Stamp, LogOut, Settings, LayoutGrid, Plus, Instagram, Globe, Mail, MessageSquare, Shield } from "lucide-react";
 
 const XANRE = {
   site: "https://xanretechltd.netlify.app/",
@@ -77,6 +77,12 @@ export default function Layout({ children }) {
                 </Button>
               }
             />
+            {user?.role === "admin" && (
+              <Button variant="ghost" size="icon" data-testid="nav-admin" title="Admin"
+                onClick={() => navigate("/app/admin")} className="text-forest hover:bg-secondary">
+                <Shield className="h-4 w-4" />
+              </Button>
+            )}
             <Button variant="ghost" size="icon" data-testid="nav-settings"
               onClick={() => navigate("/app/settings")} className="text-muted2 hover:bg-secondary">
               <Settings className="h-4 w-4" />
