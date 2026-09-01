@@ -1,0 +1,26 @@
+name: Keep Render backend warm
+
+# Render's free web service sleeps after ~15 min idle, giving the next visitor a
+# ~50s cold start. This pings it so real traffic lands on a warm instance.
+# GitHub cron can slip 5-15 min under load — for a hard guarantee use an external
+# 5-min monitor (UptimeRobot / cron-job.org) or Render Starter ($7/mo, always on).
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping API health endpoint
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 https://visascout-api.onrender.com/api/ || echo 000)
+            echo "attempt $i -> HTTP $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 20
+          done
+          echo "backend did not return 200 after 3 attempts"
+          exit 1
