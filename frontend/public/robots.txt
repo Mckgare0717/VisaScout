@@ -7,4 +7,4 @@ Disallow: /app
 Disallow: /login
 Disallow: /register
 
-Sitemap: https://visascout.vercel.app/sitemap.xml
+Sitemap: https://www.visascout.co.uk/sitemap.xml
