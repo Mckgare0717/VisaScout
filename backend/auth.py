@@ -108,6 +108,10 @@ async def seed_demo_user(db):
             "password_hash": hash_password(password),
             "name": "Demo Traveller",
             "role": "user",
+            # Pro so the regression suite (PDF export, re-run, notify) and the
+            # monitoring routine can exercise the Pro-gated endpoints.
+            "plan": "pro",
+            "lookups_used": 0,
             "provider": "email",
             "picture": None,
             "notify_outdated": True,
@@ -115,13 +119,12 @@ async def seed_demo_user(db):
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
     else:
-        updates = {}
+        updates = {"plan": "pro"}
         if not verify_password(password, existing.get("password_hash")):
             updates["password_hash"] = hash_password(password)
         if existing.get("role") is None:
             updates["role"] = "user"
-        if updates:
-            await db.users.update_one({"email": email}, {"$set": updates})
+        await db.users.update_one({"email": email}, {"$set": updates})
 
     # Admin user — only seeded when credentials are explicitly configured.
     # No hard-coded fallback: a well-known default password would be an open
