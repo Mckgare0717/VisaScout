@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { Button } from "./ui/button";
 import FeedbackDialog from "./FeedbackDialog";
-import { Stamp, LogOut, Settings, LayoutGrid, Plus, Instagram, Globe, Mail, MessageSquare, Shield } from "lucide-react";
+import { Stamp, LogOut, Settings, LayoutGrid, Plus, Instagram, Globe, Mail, MessageSquare, Shield, FileText } from "lucide-react";
 
 const XANRE = {
   site: "https://xanretechltd.netlify.app/",
@@ -63,6 +63,11 @@ export default function Layout({ children }) {
               onClick={() => navigate("/app")}
               className="text-ink hover:bg-secondary gap-1.5">
               <LayoutGrid className="h-4 w-4" /> <span className="hidden sm:inline">Searches</span>
+            </Button>
+            <Button variant="ghost" size="sm" data-testid="nav-forms"
+              onClick={() => navigate("/app/forms")}
+              className="text-ink hover:bg-secondary gap-1.5">
+              <FileText className="h-4 w-4" /> <span className="hidden sm:inline">Forms</span>
             </Button>
             <Button size="sm" data-testid="nav-new-search"
               onClick={() => navigate("/app/new")}

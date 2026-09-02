@@ -23,13 +23,14 @@ load_dotenv(ROOT_DIR / ".env")
 from auth import (
     hash_password, verify_password, create_access_token,
     make_get_current_user, make_get_current_admin, seed_demo_user,
-    DUMMY_PASSWORD_HASH,
+    new_reset_token, hash_reset_token, DUMMY_PASSWORD_HASH,
 )
 from visa_service import run_visa_lookup, PURPOSE_LABELS
 from billing import (
     make_billing_router, public_billing, is_pro, FREE_LOOKUP_LIMIT,
     stripe_subscription_status,
 )
+from schengen_form import make_forms_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -47,8 +48,11 @@ async def lifespan(_app: FastAPI):
     await db.feedback.create_index([("rate_key", 1), ("created_at", -1)])
     await db.users.create_index("stripe_customer_id", sparse=True)
     await db.rate_events.create_index([("bucket", 1), ("key", 1), ("at", -1)])
-    # TTL cleanup for expired sessions (applies to docs where expires_at is a BSON date).
+    await db.visa_forms.create_index("user_id")
+    await db.password_resets.create_index("token_hash", unique=True)
+    # TTL cleanup for expired sessions / reset tokens (docs where expires_at is a BSON date).
     await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
+    await db.password_resets.create_index("expires_at", expireAfterSeconds=0)
     await db.rate_events.create_index("at", expireAfterSeconds=3600)
     # Background lookup tasks do not survive a restart: anything still marked
     # "processing" at boot is dead and would otherwise spin in the UI forever.
@@ -72,6 +76,8 @@ get_current_user = make_get_current_user(db)
 get_current_admin = make_get_current_admin(db)
 
 OUTDATED_DAYS = 30
+APP_URL = os.environ.get("APP_URL", "").rstrip("/")
+RESET_TOKEN_TTL_HOURS = 1
 EMERGENT_SESSION_URL = os.environ.get(
     "EMERGENT_SESSION_URL",
     "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
@@ -110,6 +116,15 @@ class RegisterIn(BaseModel):
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+
+
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordIn(BaseModel):
+    token: str = Field(min_length=10, max_length=256)
+    password: str = Field(min_length=8, max_length=256)
 
 
 class LookupIn(BaseModel):
@@ -297,6 +312,76 @@ async def login(body: LoginIn, request: Request):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token(user["id"], email)
     return {"token": token, "user": public_user(user)}
+
+
+@api.post("/auth/forgot-password")
+async def forgot_password(body: ForgotPasswordIn, request: Request):
+    await _rate_limit("forgot_pw", _client_ip(request), limit=5, window_seconds=3600)
+    email = body.email.lower()
+    user = await db.users.find_one({"email": email})
+    # Always return ok — never reveal whether an email is registered. Social-login
+    # accounts (no password_hash) can't reset a password they don't have.
+    if user and user.get("password_hash"):
+        clear, token_hash = new_reset_token()
+        await db.password_resets.delete_many({"user_id": user["id"]})
+        await db.password_resets.insert_one({
+            "user_id": user["id"],
+            "token_hash": token_hash,
+            "expires_at": datetime.now(timezone.utc) + timedelta(hours=RESET_TOKEN_TTL_HOURS),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        link = f"{APP_URL}/reset-password?token={clear}" if APP_URL else f"/reset-password?token={clear}"
+        api_key = os.environ.get("RESEND_API_KEY", "").strip()
+        if api_key:
+            import resend
+            resend.api_key = api_key
+            sender = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+            name = html.escape(user.get("name") or "there")
+            email_html = f"""
+            <div style="font-family:Arial,sans-serif;color:#171A1C">
+              <h2 style="color:#1A4331">Reset your VisaScout password</h2>
+              <p>Hi {name},</p>
+              <p>We got a request to reset your password. Click the link below to choose a new one.
+              This link expires in {RESET_TOKEN_TTL_HOURS} hour(s).</p>
+              <p><a href="{html.escape(link)}" style="color:#1A4331">Reset my password</a></p>
+              <p style="color:#5A6B62;font-size:12px">If you didn't ask for this, you can ignore this email —
+              your password won't change.</p>
+            </div>"""
+            try:
+                await asyncio.to_thread(resend.Emails.send, {
+                    "from": sender, "to": [user["email"]],
+                    "subject": "Reset your VisaScout password", "html": email_html})
+            except Exception as e:
+                logger.error("password reset email failed for %s: %s", email, e)
+        else:
+            # No mail provider — the link only reaches the server logs (dev use).
+            logger.warning("password reset requested for %s but RESEND_API_KEY is unset. Link: %s",
+                           email, link)
+    return {"ok": True}
+
+
+@api.post("/auth/reset-password")
+async def reset_password(body: ResetPasswordIn, request: Request):
+    await _rate_limit("reset_pw", _client_ip(request), limit=10, window_seconds=3600)
+    rec = await db.password_resets.find_one({"token_hash": hash_reset_token(body.token)})
+    if not rec:
+        raise HTTPException(status_code=400,
+                            detail="This reset link is invalid or has already been used. Request a new one.")
+    exp = rec.get("expires_at")
+    if isinstance(exp, str):
+        exp = datetime.fromisoformat(exp)
+    if exp and exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp and exp < datetime.now(timezone.utc):
+        await db.password_resets.delete_one({"_id": rec["_id"]})
+        raise HTTPException(status_code=400, detail="This reset link has expired. Request a new one.")
+    await db.users.update_one({"id": rec["user_id"]},
+                              {"$set": {"password_hash": hash_password(body.password)}})
+    await db.password_resets.delete_many({"user_id": rec["user_id"]})
+    # Drop any server-side sessions for this user. Stateless JWTs can't be revoked
+    # here; they expire on their own within ACCESS_TOKEN_DAYS.
+    await db.user_sessions.delete_many({"user_id": rec["user_id"]})
+    return {"ok": True}
 
 
 @api.get("/auth/me")
@@ -877,6 +962,7 @@ async def strix_verify():
 
 
 api.include_router(make_billing_router(db, get_current_user))
+api.include_router(make_forms_router(db, get_current_user))
 app.include_router(api)
 
 # Browsers reject "Access-Control-Allow-Origin: *" on credentialed requests, so a

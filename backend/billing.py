@@ -6,6 +6,7 @@ webhooks so a failed renewal or a cancellation downgrades the user automatically
 """
 import os
 import logging
+from datetime import datetime, timezone
 
 import stripe as stripe_sdk
 from fastapi import APIRouter, Depends, Request, HTTPException
@@ -35,6 +36,11 @@ def _stripe() -> stripe_sdk.StripeClient:
             raise HTTPException(status_code=503, detail="Billing is not configured yet.")
         _client = stripe_sdk.StripeClient(STRIPE_SECRET_KEY)
     return _client
+
+
+def stripe_client() -> stripe_sdk.StripeClient:
+    """Shared Stripe client for other modules (e.g. one-off form payments)."""
+    return _stripe()
 
 
 def public_billing(user: dict) -> dict:
@@ -149,6 +155,18 @@ def make_billing_router(db, get_current_user) -> APIRouter:
         raw = event["data"]["object"]
         obj = raw.to_dict() if hasattr(raw, "to_dict") else raw
         etype = event["type"]
+
+        # One-off Schengen-form payments ride the same webhook. They carry a
+        # `kind` marker in metadata and never touch the subscription plan.
+        meta = obj.get("metadata") or {}
+        if meta.get("kind") == "schengen_form":
+            if (etype == "checkout.session.completed"
+                    and obj.get("payment_status") in ("paid", "no_payment_required")):
+                await db.visa_forms.update_one(
+                    {"id": meta.get("form_id"), "user_id": meta.get("user_id")},
+                    {"$set": {"paid": True,
+                              "paid_at": datetime.now(timezone.utc).isoformat()}})
+            return {"received": True}
 
         if etype == "checkout.session.completed":
             user_id = obj.get("client_reference_id")

@@ -1,5 +1,7 @@
 import os
 import uuid
+import hashlib
+import secrets
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
@@ -27,6 +29,18 @@ def verify_password(plain: str, hashed) -> bool:
         return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
     except Exception:
         return False
+
+
+def hash_reset_token(token: str) -> str:
+    # The token is 256 bits of CSPRNG output, so a plain sha256 is enough to
+    # store — no need for bcrypt's slowness on an already-unguessable value.
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def new_reset_token() -> tuple[str, str]:
+    """Return (clear token for the email link, hash to store in the DB)."""
+    token = secrets.token_urlsafe(32)
+    return token, hash_reset_token(token)
 
 
 def get_jwt_secret() -> str:
