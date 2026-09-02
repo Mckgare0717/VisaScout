@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { LOGIN } from "../constants/testIds";
 import { useAuth } from "../context/AuthContext";
 import { track } from "@vercel/analytics";
 import { formatApiErrorDetail } from "../lib/api";
@@ -105,6 +106,14 @@ export default function Auth({ mode }) {
               <Label htmlFor="password">Password</Label>
               <Input id="password" type="password" data-testid="auth-password" value={password} onChange={(e) => setPassword(e.target.value)}
                 required minLength={isLogin ? undefined : 8} className="rounded-sm border-line bg-white" placeholder="••••••••" />
+              {isLogin && (
+                <div className="text-right">
+                  <Link to="/forgot-password" data-testid={LOGIN.forgotPasswordLink}
+                    className="text-xs text-muted2 hover:text-forest hover:underline">
+                    Forgot password?
+                  </Link>
+                </div>
+              )}
             </div>
 
             {error && (
