@@ -69,8 +69,32 @@ async def lifespan(_app: FastAPI):
     client.close()
 
 
-app = FastAPI(title="VisaScout API", lifespan=lifespan)
+# The auto-generated docs hand out the full endpoint map (including admin
+# routes) to anyone who requests them — off by default, opt in for local dev.
+_docs_enabled = os.environ.get("ENABLE_API_DOCS", "").strip().lower() in ("1", "true", "yes")
+app = FastAPI(
+    title="VisaScout API",
+    lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+)
 api = APIRouter(prefix="/api")
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # A pure JSON/PDF API never needs to load or be loaded as active content.
+    response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+    # Render/Cloudflare already terminate and redirect to HTTPS; this just tells
+    # browsers to skip the plaintext hop entirely on repeat visits.
+    response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+    return response
+
 
 get_current_user = make_get_current_user(db)
 get_current_admin = make_get_current_admin(db)
