@@ -53,6 +53,7 @@ backend console — copy it from there in local dev.
 | `ANTHROPIC_API_KEY` | with `anthropic` | Anthropic API key ([console.anthropic.com](https://console.anthropic.com)) — Claude + web search |
 | `ANTHROPIC_MODEL` | no | Claude model for lookups (default `claude-sonnet-5`) |
 | `CORS_ORIGINS` | prod | Comma-separated allowed frontend origins. Unset/`*` = wildcard **without** credentials (cookie auth disabled) |
+| `ENABLE_API_DOCS` | no | Set `true` to serve `/docs`, `/redoc`, `/openapi.json`. Off by default — public Swagger docs hand out the full endpoint map, including admin routes |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | no | If **both** are set, an admin account is seeded at startup. No defaults — omitting them means no admin is created |
 | `DEMO_EMAIL` / `DEMO_PASSWORD` | no | Demo account seeded at startup for internal use. Change these from the defaults on any deploy real users can reach — the account still exists even when the frontend doesn't advertise it (see `REACT_APP_SHOW_DEMO` below) |
 | `RESEND_API_KEY` / `SENDER_EMAIL` | no | Enables outbound email (outdated-search notices, feedback, password-reset links, form PDFs) via Resend. Without it, feedback is still stored in MongoDB and reset links are written to the server log instead of emailed |
